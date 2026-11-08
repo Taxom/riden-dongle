@@ -721,15 +721,11 @@ bool RidenModbus::wait_for_inactive()
         return false;
     }
     // Wait until no transaction is active or timeout has passed
-    unsigned long started_at = millis();
-    unsigned long wait_until = started_at + timeout;
+    // ModbusRTU owns the timeout (MODBUSRTU_TIMEOUT). Do not return while
+    // it still holds a pointer to a caller's stack buffer or callback.
     while (modbus.server()) {
         delay(1);
         modbus.task();
-        if (millis() > wait_until) {
-            LOG_LN("Timed out waiting for response from power supply module");
-            return false;
-        }
     }
     return true;
 #endif
@@ -744,12 +740,17 @@ bool RidenModbus::read_holding_registers(const uint16_t offset, uint16_t *value,
     if (!wait_for_inactive()) {
         return false;
     }
-    bool res = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs);
+    Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    bool res = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs,
+                              [&result](Modbus::ResultCode code, uint16_t, void *) {
+                                  result = code;
+                                  return true;
+                              });
     if (!res) {
         return false;
     }
     // Wait until we receive an answer
-    return wait_for_inactive();
+    return wait_for_inactive() && result == Modbus::EX_SUCCESS;
 #endif
 }
 
@@ -761,12 +762,17 @@ bool RidenModbus::write_holding_register(const uint16_t offset, const uint16_t v
     if (!wait_for_inactive()) {
         return false;
     }
-    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value);
+    Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value,
+                              [&result](Modbus::ResultCode code, uint16_t, void *) {
+                                  result = code;
+                                  return true;
+                              });
     if (!res) {
         return false;
     }
     // Wait until we receive an answer
-    return wait_for_inactive();
+    return wait_for_inactive() && result == Modbus::EX_SUCCESS;
 #endif
 }
 
@@ -778,12 +784,17 @@ bool RidenModbus::write_holding_registers(const uint16_t offset, uint16_t *value
     if (!wait_for_inactive()) {
         return false;
     }
-    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value, numregs);
+    Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value, numregs,
+                              [&result](Modbus::ResultCode code, uint16_t, void *) {
+                                  result = code;
+                                  return true;
+                              });
     if (!res) {
         return false;
     }
     // Wait until we receive an answer
-    return wait_for_inactive();
+    return wait_for_inactive() && result == Modbus::EX_SUCCESS;
 #endif
 }
 

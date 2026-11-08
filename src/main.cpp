@@ -34,8 +34,9 @@ using namespace RidenDongle;
 static Ticker led_ticker;
 static char hostname[100];
 
-static bool has_time = false;
-static bool did_update_time = false;
+static volatile bool clock_update_pending = false;
+static bool clock_update_failed = false;
+static unsigned long last_clock_update_attempt = 0;
 
 static bool connected = false;
 
@@ -180,7 +181,12 @@ static bool connect_wifi(const char *hostname)
 void loop()
 {
     if (connected) {
-        if (has_time && !did_update_time) {
+        if (clock_update_pending &&
+            (!clock_update_failed || millis() - last_clock_update_attempt >= 5000UL)) {
+            // Clear before the write: a new NTP event during a yielding
+            // Modbus transaction must remain pending for the next loop.
+            clock_update_pending = false;
+            last_clock_update_attempt = millis();
             LOG_LN("Setting PSU clock");
             // Read time and convert to local timezone
             time_t now;
@@ -188,8 +194,10 @@ void loop()
             time(&now);
             localtime_r(&now, &tm);
 
-            riden_modbus.set_clock(tm);
-            did_update_time = true;
+            clock_update_failed = !riden_modbus.set_clock(tm);
+            if (clock_update_failed) {
+                clock_update_pending = true;
+            }
         }
 
         MDNS.update();
@@ -219,5 +227,5 @@ void wifi_manager_config_mode_callback(WiFiManager *myWiFiManager)
 void on_time_received()
 {
     LOG_LN("Time has been received");
-    has_time = true;
+    clock_update_pending = true;
 }

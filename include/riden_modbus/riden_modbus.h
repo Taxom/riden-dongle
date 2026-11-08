@@ -292,7 +292,6 @@ class RidenModbus
 
   private:
     ModbusRTU modbus;
-    unsigned long timeout = 500; // milliseconds
     bool initialized = false;
     String type;
 
