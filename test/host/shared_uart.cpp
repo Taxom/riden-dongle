@@ -8,9 +8,14 @@
 uint64_t host_time_us = 10000;
 HostSerial Serial;
 static uint16_t regs[512] = {};
-static bool drop_next = false, wrong_count_next = false;
+static unsigned drop_next = 0;
+static bool wrong_count_next = false;
 static uint8_t exception_next = 0;
 static uint64_t next_delay_us = 3000;
+static bool enforce_turnaround = false;
+static uint64_t reply_at = 0;
+static bool corrupt_crc_next = false, drop_write_ack_next = false;
+static unsigned writes = 0;
 
 static std::vector<uint8_t> adu(uint8_t address, std::vector<uint8_t> pdu) {
     pdu.insert(pdu.begin(),address);
@@ -23,7 +28,8 @@ static std::vector<uint8_t> adu(uint8_t address, std::vector<uint8_t> pdu) {
 }
 
 static void emulate_psu(const std::vector<uint8_t> &req) {
-    if (drop_next) { drop_next=false; return; }
+    if (drop_next) { --drop_next; return; }
+    if (enforce_turnaround && host_time_us - reply_at < 10000) return;
     const auto delay_us=next_delay_us; next_delay_us=3000;
     const uint8_t address=req[0], fn=req[1];
     if(exception_next) {
@@ -38,12 +44,21 @@ static void emulate_psu(const std::vector<uint8_t> &req) {
         pdu={3,uint8_t(n*2)};
         for(uint16_t i=0;i<n;i++) { pdu.push_back(regs[start+i]>>8);pdu.push_back(regs[start+i]&0xff); }
     } else if(fn==6) {
+        ++writes;
         regs[start]=count; pdu.assign(req.begin()+1,req.begin()+6);
     } else if(fn==16) {
+        ++writes;
         for(uint16_t i=0;i<count;i++) regs[start+i]=(uint16_t(req[7+i*2])<<8)|req[8+i*2];
         pdu.assign(req.begin()+1,req.begin()+6);
     } else { std::abort(); }
-    Serial.deliver(adu(address,pdu),delay_us);
+    if (drop_write_ack_next && (fn==6 || fn==16)) {
+        drop_write_ack_next=false;
+        return;
+    }
+    auto response=adu(address,pdu);
+    if (corrupt_crc_next) { response.back() ^= 0xff; corrupt_crc_next=false; }
+    Serial.deliver(std::move(response),delay_us);
+    reply_at = host_time_us + delay_us;
 }
 
 static void pump(RidenDongle::RidenModbus &bus, unsigned ms=15) {
@@ -82,6 +97,7 @@ int main(int argc,char **argv) {
     if(reproduce) return 0;
     std::cout<<"PASS: two TCP clients and overlapping UART completion\n";
 
+#ifndef RIDEN_REPRODUCE_UPSTREAM
     // A concurrent web read must get its own register block.
     tcp.enqueue(100,31,{3,0,0,0,1});bridge.loop();
     uint16_t web[20];std::fill(std::begin(web),std::end(web),0xcafe);
@@ -90,19 +106,57 @@ int main(int argc,char **argv) {
     check_packet(tc,31,{3,2,0xea,0xa1});
     std::cout<<"PASS: web register block while TCP request is pending\n";
 
-    drop_next=true;tcp.enqueue(100,0,{3,0,0,0,1});bridge.loop();
+    // A slow-to-rearm slave ignores back-to-back requests. No timeout
+    // should be needed when TCP and local operations share a UART guard.
+    enforce_turnaround=true;
+    tcp.enqueue(100,32,{3,0,8,0,1});
+    tcp.enqueue(135,33,{3,0,10,0,1});bridge.loop();pump(bus);
+    check_packet(tc,32,{3,2,0x0a,0x28});
+    check_packet(ha,33,{3,2,0x0a,0x27});
+    assert(bus.read_holding_registers(0,web,20));
+    enforce_turnaround=false;
+    std::cout<<"PASS: shared UART turnaround between TCP and web requests\n";
+
+    auto &tc2=tcp.addClient(100); // second TestController on the same PC
+    const auto tc_packets=tc.packets.size(), tc2_packets=tc2.packets.size();
+    tcp.enqueueClient(tc,0,{3,0,8,0,1});
+    tcp.enqueueClient(tc2,0,{3,0,10,0,1});bridge.loop();pump(bus);
+    assert(tc.packets.size()==tc_packets+1 && tc2.packets.size()==tc2_packets+1);
+    check_packet(tc,0,{3,2,0x0a,0x28});
+    check_packet(tc2,0,{3,2,0x0a,0x27});
+    std::cout<<"PASS: same-IP TCP clients with identical transaction IDs stay separate\n";
+
+    drop_next=1;tcp.enqueue(100,0,{3,0,0,0,1});bridge.loop();pump(bus);
+    check_packet(tc,0,{3,2,0xea,0xa1});
+    std::cout<<"PASS: one lost TCP read is retried with the original transaction ID\n";
+
+    const auto discarded=bus.get_diagnostics().discarded_bytes;
+    next_delay_us=1020000;tcp.enqueueClient(tc2,34,{3,0,8,0,1});bridge.loop();
+    check_packet(tc2,34,{3,2,0x0a,0x28});
+    assert(bus.get_diagnostics().discarded_bytes>discarded);
+    assert(bus.read_holding_registers(0,web,20) && web[0]==60065);
+    std::cout<<"PASS: late reply drained during recovery before retry/web reads\n";
+
+    // A fresh zero is data, including after a failed UART attempt.
+    corrupt_crc_next=true;tcp.enqueueClient(tc2,35,{3,0,11,0,1});bridge.loop();
+    check_packet(tc2,35,{3,2,0,0});
+    std::cout<<"PASS: CRC failure retried, genuine zero preserved\n";
+
+    drop_next=2;tcp.enqueue(100,0,{3,0,0,0,1});bridge.loop();
     assert(bus.read_holding_registers(0,web,20));
     check_packet(tc,0,{0x83,0x0b});
     assert(web[0]==60065 && web[8]==2600);
     std::cout<<"PASS: TCP timeout, transaction ID zero, next web reply not stolen\n";
 
     wrong_count_next=true;tcp.enqueue(135,41,{3,0,0,0,1});bridge.loop();pump(bus);
-    check_packet(ha,41,{0x83,0x0b});
+    check_packet(ha,41,{3,2,0xea,0xa1});
     assert(bus.read_holding_registers(0,web,20));assert(web[0]==60065);
     std::cout<<"PASS: mismatched reply length rejected, web recovers\n";
 
+    const auto before_exception=Serial.requests.size();
     exception_next=2;tcp.enqueue(100,42,{3,0,0,0,1});bridge.loop();pump(bus);
     check_packet(tc,42,{0x83,2});
+    assert(Serial.requests.size()==before_exception+1);
     uint16_t value=0xcafe;exception_next=2;
     assert(!bus.read_holding_registers(0,&value));assert(value==0xcafe);
     wrong_count_next=true;
@@ -132,14 +186,31 @@ int main(int argc,char **argv) {
     check_packet(ha,45,{16,0,8,0,2});assert(regs[8]==2600 && regs[9]==500);
     std::cout<<"PASS: TCP single/multiple writes routed to their clients\n";
 
+    const auto writes_before=writes;
+    const auto requests_before=Serial.requests.size();
+    drop_write_ack_next=true;tcp.enqueueClient(tc2,46,{6,0,8,0x0a,0x28});bridge.loop();
+    check_packet(tc2,46,{0x86,0x0b});
+    assert(writes==writes_before+1 && Serial.requests.size()==requests_before+1);
+    std::cout<<"PASS: lost write acknowledgement does not repeat the applied write\n";
+
     // Many interleavings of TC, HA, and web reads must preserve routing.
     for(uint16_t i=0;i<200;i++) {
+        if (i%17==0) drop_next=1;
+        const uint16_t setpoint=2600+i;
+        regs[8]=setpoint;
         tcp.enqueue(100,100+i,{3,0,8,0,1});
         tcp.enqueue(135,1000+i,{3,0,3,0,1});bridge.loop();
+        tcp.enqueueClient(tc2,100+i,{3,0,10,0,1});bridge.loop();
         assert(bus.read_holding_registers(0,web,20));
-        check_packet(tc,100+i,{3,2,0x0a,0x28});
+        check_packet(tc,100+i,{3,2,uint8_t(setpoint>>8),uint8_t(setpoint)});
         check_packet(ha,1000+i,{3,2,0,143});
-        assert(web[0]==60065 && web[8]==2600);
+        check_packet(tc2,100+i,{3,2,0x0a,0x27});
+        assert(web[0]==60065 && web[8]==setpoint);
     }
-    std::cout<<"PASS: 200 interleaved TC + HA + web cycles\n";
+    assert(bridge.get_diagnostics().read_retries>=16);
+    assert(bridge.get_diagnostics().recovered_reads>=15);
+    assert(bridge.get_diagnostics().uart_timeouts>=15);
+    assert(bridge.get_diagnostics().invalid_responses>=1);
+    std::cout<<"PASS: 200 cycles of two same-IP TCs + HA + web with dropped replies\n";
+#endif
 }

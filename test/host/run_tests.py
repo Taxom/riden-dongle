@@ -33,5 +33,13 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
          '-I'+str(root/'test/host/include'),'-I'+str(headers),'-I'+str(root/'include'),'-I'+str(lib),
          str(root/'test/host/shared_uart.cpp'),*(str(x) for x in sources),
          str(lib/'Modbus.cpp'),str(lib/'ModbusRTU.cpp'),'-o',str(tmp/'shared_uart')]
+    if args.reproduce_upstream:
+        cmd.insert(1,'-DRIDEN_REPRODUCE_UPSTREAM')
     subprocess.run(cmd,check=True)
     subprocess.run([str(tmp/'shared_uart')]+(['--reproduce'] if args.reproduce_upstream else []),check=True)
+    if not args.reproduce_upstream:
+        cmd[cmd.index(str(root/'test/host/shared_uart.cpp'))]=str(root/'test/host/tcp_sessions.cpp')
+        cmd.insert(1,'-I'+str(root/'test/host/real_tcp'))
+        cmd[-1]=str(tmp/'tcp_sessions')
+        subprocess.run(cmd,check=True)
+        subprocess.run([str(tmp/'tcp_sessions')],check=True)

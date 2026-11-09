@@ -24,13 +24,14 @@ struct HostTCPClient {
 class ModbusTCP : public Modbus {
   protected:
     HostTCPClient *tcpclient[MODBUSIP_MAX_CLIENTS] = {};
+    int8_t n = -1;
     int8_t getMaster(IPAddress ip) {
         for (int i=0; i<MODBUSIP_MAX_CLIENTS; ++i)
             if (tcpclient[i] && tcpclient[i]->ip == uint32_t(ip)) return i;
         return -1;
     }
   public:
-    struct Request { uint32_t ip; uint16_t id; uint8_t unit; std::vector<uint8_t> pdu; };
+    struct Request { int8_t slot; uint16_t id; uint8_t unit; std::vector<uint8_t> pdu; };
     std::deque<Request> incoming;
     uint16_t transaction = 1;
     inline static ModbusTCP *instance = nullptr;
@@ -42,18 +43,28 @@ class ModbusTCP : public Modbus {
         std::abort();
     }
     void enqueue(uint32_t ip, uint16_t id, std::vector<uint8_t> pdu, uint8_t unit=1) {
-        incoming.push_back({ip,id,unit,std::move(pdu)});
+        incoming.push_back({getMaster(ip),id,unit,std::move(pdu)});
+    }
+    void enqueueClient(HostTCPClient &client, uint16_t id, std::vector<uint8_t> pdu, uint8_t unit=1) {
+        for (int8_t slot=0; slot<MODBUSIP_MAX_CLIENTS; ++slot)
+            if (tcpclient[slot] == &client) {
+                incoming.push_back({slot,id,unit,std::move(pdu)});
+                return;
+            }
+        std::abort();
     }
     void task() {
         while (!incoming.empty()) {
             const auto req = incoming.front(); incoming.pop_front();
+            n = req.slot;
             free(_frame); _len = req.pdu.size();
             _frame = static_cast<uint8_t *>(malloc(_len));
             std::memcpy(_frame, req.pdu.data(), _len);
-            frame_arg_t source(req.unit, req.ip, req.id, true);
+            frame_arg_t source(req.unit, tcpclient[n]->remoteIP(), req.id, true);
             _cbRaw(_frame, _len, &source);
             free(_frame); _frame = nullptr; _len = 0;
         }
+        n = -1;
     }
     void setTransactionId(uint16_t id) { transaction = id ? id : 1; }
     uint16_t rawResponce(IPAddress ip, uint8_t *data, uint16_t len, uint8_t unit) {

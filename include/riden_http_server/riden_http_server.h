@@ -49,6 +49,7 @@ class RidenHttpServer
     void handle_toggle_out();
     
     void handle_modbus_qps();
+    void handle_modbus_diagnostics();
     void send_redirect_root();
     void send_redirect_self();
 

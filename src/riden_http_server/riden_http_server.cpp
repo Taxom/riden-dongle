@@ -126,6 +126,7 @@ bool RidenHttpServer::begin()
               std::bind(&RidenHttpServer::handle_firmware_update_post, this));
     server.on("/lxi/identification", HTTPMethod::HTTP_GET, std::bind(&RidenHttpServer::handle_lxi_identification, this));
     server.on("/qps/modbus/", HTTPMethod::HTTP_GET, std::bind(&RidenHttpServer::handle_modbus_qps, this));
+    server.on("/diagnostics/modbus", HTTPMethod::HTTP_GET, std::bind(&RidenHttpServer::handle_modbus_diagnostics, this));
     server.onNotFound(std::bind(&RidenHttpServer::handle_not_found, this));
     server.begin(port());
 
@@ -649,6 +650,32 @@ void RidenHttpServer::send_info_row(const String key, const String value)
 void RidenHttpServer::handle_not_found()
 {
     server.send(404, "text/plain", "404: Not found");
+}
+
+void RidenHttpServer::handle_modbus_diagnostics()
+{
+    // Counters only: observing diagnostics must not add UART requests.
+    const auto &tcp = bridge.get_diagnostics();
+    const auto &uart = modbus.get_diagnostics();
+    char json[900];
+    snprintf(json, sizeof(json),
+             "{\"version\":\"%s\",\"uptime_ms\":%lu,"
+             "\"requests\":%lu,\"read_retries\":%lu,\"recovered_reads\":%lu,"
+             "\"uart_timeouts\":%lu,\"invalid_responses\":%lu,\"uart_exceptions\":%lu,"
+             "\"gateway_failures\":%lu,\"last_failed_function\":%u,"
+             "\"last_failed_register\":%u,\"last_failure_code\":%u,"
+             "\"recovery_waits\":%lu,\"discarded_bytes\":%lu,"
+             "\"rx_overruns\":%lu,\"rx_errors\":%lu}",
+             RidenDongle::version_string, millis(),
+             (unsigned long)tcp.requests, (unsigned long)tcp.read_retries,
+             (unsigned long)tcp.recovered_reads, (unsigned long)tcp.uart_timeouts,
+             (unsigned long)tcp.invalid_responses, (unsigned long)tcp.uart_exceptions,
+             (unsigned long)tcp.gateway_failures, tcp.last_failed_function,
+             tcp.last_failed_register, tcp.last_failure_code,
+             (unsigned long)uart.recovery_waits, (unsigned long)uart.discarded_bytes,
+             (unsigned long)uart.rx_overruns, (unsigned long)uart.rx_errors);
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", json);
 }
 
 void RidenHttpServer::handle_modbus_qps()

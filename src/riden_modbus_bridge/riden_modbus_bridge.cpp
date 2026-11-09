@@ -95,9 +95,11 @@ Modbus::ResultCode RidenModbusBridge::modbus_tcp_raw_callback(uint8_t *data, uin
 
     transaction_id = source->transactionId;
     slave_id = source->slaveId;
-    ip = source->ipaddr;
+    client_slot = modbus_tcp.current_client();
     request_pending = true;
+    ++diagnostics.requests;
     request_length = len;
+    std::memset(request_header, 0, sizeof(request_header));
     std::memcpy(request_header, data, std::min<size_t>(len, sizeof(request_header)));
 
     // This gateway has one PSU at address 1. A broadcast does not create an
@@ -112,19 +114,51 @@ Modbus::ResultCode RidenModbusBridge::modbus_tcp_raw_callback(uint8_t *data, uin
         return Modbus::EX_SUCCESS;
     }
 
-    riden_modbus.modbus.onRaw(::modbus_rtu_raw_callback);
-    const bool sent = riden_modbus.modbus.rawRequest(
-        slave_id, data, len,
-        [this](Modbus::ResultCode, uint16_t, void *) {
-            // A normal response already completed the request in onRaw().
-            // On timeout/error, remove the interceptor before local reads
-            // can start and return an exception to the correct TCP client.
-            if (request_pending) {
-                fail_request(Modbus::EX_DEVICE_FAILED_TO_RESPOND);
-            }
-            return true;
-        });
-    if (!sent) {
+    const bool read_only = data[0] >= Modbus::FC_READ_COILS &&
+                           data[0] <= Modbus::FC_READ_INPUT_REGS;
+    if (read_only && len != 5) {
+        fail_request(Modbus::EX_ILLEGAL_VALUE);
+        return Modbus::EX_SUCCESS;
+    }
+    // Complete the UART attempt before returning from this callback. This
+    // keeps a read retry in the same ownership scope as the TCP request;
+    // HTTP/local work cannot slip between it and a late response.
+    const uint32_t exceptions_before = diagnostics.uart_exceptions;
+    for (unsigned attempt = 0; attempt < (read_only ? 2U : 1U); ++attempt) {
+        if (!riden_modbus.prepare_request()) break;
+        if (attempt) ++diagnostics.read_retries;
+        riden_modbus.modbus.onRaw(::modbus_rtu_raw_callback);
+        const bool sent = riden_modbus.modbus.rawRequest(
+            slave_id, data, len,
+            [this](Modbus::ResultCode code, uint16_t, void *) {
+                if (request_pending) {
+                    // onRaw already sent successful/exception replies. A
+                    // failure is finalized or retried only AFTER task()
+                    // releases its callback and outgoing RTU frame.
+                    riden_modbus.modbus.onRaw(nullptr);
+                    riden_modbus.uart_recovery_pending = true;
+                    diagnostics.last_failed_function = request_header[0];
+                    diagnostics.last_failed_register =
+                        (uint16_t(request_header[1]) << 8) | request_header[2];
+                    if (code == Modbus::EX_TIMEOUT) {
+                        ++diagnostics.uart_timeouts;
+                        diagnostics.last_failure_code = uint16_t(code);
+                    }
+                }
+                return true;
+            });
+        if (!sent) {
+            riden_modbus.modbus.onRaw(nullptr);
+            break;
+        }
+        riden_modbus.wait_for_inactive();
+        if (!request_pending) {
+            if (attempt && diagnostics.uart_exceptions == exceptions_before)
+                ++diagnostics.recovered_reads;
+            return Modbus::EX_SUCCESS;
+        }
+    }
+    if (request_pending) {
         fail_request(Modbus::EX_DEVICE_FAILED_TO_RESPOND);
     }
     return Modbus::EX_SUCCESS; // Stops ModbusTCP from processing the data
@@ -150,17 +184,22 @@ Modbus::ResultCode RidenModbusBridge::modbus_rtu_raw_callback(uint8_t *data, uin
     }
     if (source->slaveId != slave_id || len == 0 ||
         (data[0] & 0x7f) != request_header[0]) {
+        ++diagnostics.invalid_responses;
+        diagnostics.last_failure_code = uint16_t(Modbus::EX_DATA_MISMACH);
         // Not this transaction. Keep waiting for its reply/timeout.
         return Modbus::EX_SUCCESS;
     }
 
     if (valid_response(data, len)) {
-        modbus_tcp.send_response(ip, transaction_id, slave_id, data, len);
+        if (data[0] & 0x80) ++diagnostics.uart_exceptions;
+        modbus_tcp.send_response(client_slot, transaction_id, slave_id, data, len);
         finish_request();
     } else {
         // Never turn a stale 20-register web reply into a one-register TCP
         // reading. Let the caller see an error instead of plausible garbage.
-        fail_request(Modbus::EX_DEVICE_FAILED_TO_RESPOND);
+        ++diagnostics.invalid_responses;
+        diagnostics.last_failure_code = uint16_t(Modbus::EX_DATA_MISMACH);
+        riden_modbus.uart_recovery_pending = true;
     }
     return Modbus::EX_SUCCESS; // Stops ModbusRTU from processing the data
 #endif
@@ -172,14 +211,15 @@ void RidenModbusBridge::finish_request()
     request_pending = false;
     transaction_id = 0;
     slave_id = 0;
-    ip = 0;
+    client_slot = -1;
     request_length = 0;
 }
 
 void RidenModbusBridge::fail_request(Modbus::ResultCode error)
 {
+    ++diagnostics.gateway_failures;
     const uint8_t response[] = {uint8_t(request_header[0] | 0x80), uint8_t(error)};
-    modbus_tcp.send_response(ip, transaction_id, slave_id, response, sizeof(response));
+    modbus_tcp.send_response(client_slot, transaction_id, slave_id, response, sizeof(response));
     finish_request();
 }
 
@@ -208,11 +248,11 @@ bool RidenModbusBridge::valid_response(const uint8_t *data, uint8_t len) const
     }
 }
 
-bool RidenModbusTCP::send_response(uint32_t ip, uint16_t transaction, uint8_t unit,
+bool RidenModbusTCP::send_response(int8_t client, uint16_t transaction, uint8_t unit,
                                  const uint8_t *data, uint8_t len)
 {
-    const int8_t client = getMaster(IPAddress(ip));
-    if (client < 0 || !tcpclient[client] || !tcpclient[client]->connected()) {
+    if (client < 0 || client >= MODBUSIP_MAX_CLIENTS ||
+        !tcpclient[client] || !tcpclient[client]->connected()) {
         return false;
     }
     uint8_t frame[7 + MODBUS_MAX_FRAME];
@@ -250,10 +290,11 @@ std::list<IPAddress> RidenModbusTCP::get_connected_clients()
 
 void RidenModbusTCP::disconnect_client(const IPAddress &ip)
 {
-    int8_t n = getMaster(ip);
-    if (n != -1) {
-        tcpclient[n]->flush();
-        delete tcpclient[n];
-        tcpclient[n] = nullptr;
+    for (int i = 0; i < MODBUSIP_MAX_CLIENTS; ++i) {
+        if (tcpclient[i] && uint32_t(tcpclient[i]->remoteIP()) == uint32_t(ip)) {
+            tcpclient[i]->flush();
+            delete tcpclient[i];
+            tcpclient[i] = nullptr;
+        }
     }
 }

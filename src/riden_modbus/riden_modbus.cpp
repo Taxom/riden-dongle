@@ -118,7 +118,7 @@ bool RidenModbus::loop()
         return false;
     }
 
-    modbus.task();
+    service_uart();
     return true;
 #endif
 }
@@ -725,9 +725,67 @@ bool RidenModbus::wait_for_inactive()
     // it still holds a pointer to a caller's stack buffer or callback.
     while (modbus.server()) {
         delay(1);
-        modbus.task();
+        service_uart();
     }
     return true;
+#endif
+}
+
+void RidenModbus::service_uart()
+{
+#ifndef MOCK_RIDEN
+#if defined(ESP8266) && !defined(MODBUS_USE_SOFWARE_SERIAL)
+    if (SerialRuideng.hasOverrun()) ++diagnostics.rx_overruns;
+    if (SerialRuideng.hasRxError()) ++diagnostics.rx_errors;
+#endif
+    const bool active = modbus.server() != 0;
+    if (!active) {
+        // An expired transaction has no destination. Drain late bytes here
+        // instead of feeding short/unsolicited frames to the RTU parser.
+        while (SerialRuideng.available()) {
+            SerialRuideng.read();
+            ++diagnostics.discarded_bytes;
+            last_uart_completion_us = micros();
+            uart_completed = true;
+        }
+        return;
+    }
+    modbus.task();
+    if (!modbus.server()) {
+        last_uart_completion_us = micros();
+        uart_completed = true;
+    }
+#endif
+}
+
+bool RidenModbus::prepare_request()
+{
+#ifdef MOCK_RIDEN
+    return true;
+#else
+    if (!wait_for_inactive()) return false;
+    // The RTU library detects the end of an incoming frame, but does not
+    // pace new outgoing requests. Give the PSU time to rearm for both local
+    // and TCP operations. After a failure, allow a longer quiet interval.
+    const uint32_t guard_us = uart_recovery_pending ? 50000UL : 10000UL;
+    if (uart_recovery_pending) ++diagnostics.recovery_waits;
+    uint32_t quiet_since = uart_recovery_pending ? micros() : last_uart_completion_us;
+    const uint32_t started = micros();
+    bool need_guard = uart_completed || uart_recovery_pending;
+    do {
+        while (SerialRuideng.available()) {
+            SerialRuideng.read();
+            ++diagnostics.discarded_bytes;
+            quiet_since = micros();
+            need_guard = true;
+        }
+        if (!need_guard || uint32_t(micros() - quiet_since) >= guard_us) {
+            uart_recovery_pending = false;
+            return true;
+        }
+        if (uint32_t(micros() - started) >= 250000UL) return false;
+        delay(1);
+    } while (true);
 #endif
 }
 
@@ -737,13 +795,14 @@ bool RidenModbus::read_holding_registers(const uint16_t offset, uint16_t *value,
     memset(value, 0, numregs * sizeof(uint16_t));
     return true;
 #else
-    if (!wait_for_inactive()) {
+    if (!prepare_request()) {
         return false;
     }
     Modbus::ResultCode result = Modbus::EX_TIMEOUT;
     bool res = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs,
-                              [&result](Modbus::ResultCode code, uint16_t, void *) {
+                              [this, &result](Modbus::ResultCode code, uint16_t, void *) {
                                   result = code;
+                                  if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
                                   return true;
                               });
     if (!res) {
@@ -759,13 +818,14 @@ bool RidenModbus::write_holding_register(const uint16_t offset, const uint16_t v
 #ifdef MOCK_RIDEN
     return true;
 #else  
-    if (!wait_for_inactive()) {
+    if (!prepare_request()) {
         return false;
     }
     Modbus::ResultCode result = Modbus::EX_TIMEOUT;
     bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value,
-                              [&result](Modbus::ResultCode code, uint16_t, void *) {
+                              [this, &result](Modbus::ResultCode code, uint16_t, void *) {
                                   result = code;
+                                  if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
                                   return true;
                               });
     if (!res) {
@@ -781,13 +841,14 @@ bool RidenModbus::write_holding_registers(const uint16_t offset, uint16_t *value
 #ifdef MOCK_RIDEN
     return true;
 #else
-    if (!wait_for_inactive()) {
+    if (!prepare_request()) {
         return false;
     }
     Modbus::ResultCode result = Modbus::EX_TIMEOUT;
     bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value, numregs,
-                              [&result](Modbus::ResultCode code, uint16_t, void *) {
+                              [this, &result](Modbus::ResultCode code, uint16_t, void *) {
                                   result = code;
+                                  if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
                                   return true;
                               });
     if (!res) {
