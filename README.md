@@ -3,6 +3,18 @@
 This is an alternative firmware for the Riden WiFi module that
 provides Modbus TCP and SCPI support as well as a web interface.
 
+This Taxom fork adds shared multi-client UART recovery, checked web output
+commands, strict setpoint validation, output-OFF clock synchronization, reliable
+HTTP update/restart handling and optional detailed diagnostics. Firmware
+**1.7.0-taxom.9** passed the final RD6006P/UniSoft ESP-12F hardware acceptance
+test with two Modbus readers, a controller and HTTP load in both diagnostic modes.
+
+See [fork behavior and test results](FORK_NOTES.md),
+[preserved version history](history/README.md), and the
+[Windows/Python final acceptance tool](tools/final_acceptance_test/README_RU.txt).
+Firmware binaries are available as artifacts in
+[Firmware checks](https://github.com/Taxom/riden-dongle/actions/workflows/checks.yaml).
+
 It is geared towards easy remote control via both compatibility with standard lab automation tools, plus control and viewing of the essentials via its web interface.
 
 It is not compatible with Riden's mobile app.

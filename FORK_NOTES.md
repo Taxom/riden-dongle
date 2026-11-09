@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.9**.
+Current firmware version: **1.7.0-taxom.9**.
 
 ## Observed problem
 
@@ -177,7 +177,8 @@ set `ASAN_OPTIONS=detect_leaks=0`. Address/undefined-behavior checks remain on.
 a successful `.6` to `.6` self-update/reboot on the physical module.
 `taxom.7` adds the diagnostics navigation link to those changes. `taxom.8`
 adds an optional, persistent detailed-diagnostics setting; hardware testing
-of the new switch is still pending.
+of the switch and strict input validation was subsequently confirmed in the
+`taxom.9` final acceptance run documented below.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
    to upload `firmware_esp12e_1_7_0-taxom_9.bin` and reboot the dongle.
@@ -441,4 +442,56 @@ after the original setpoints and protected settings are verified. The initial
 diagnostics checkbox is restored too. An interruption or failed restoration
 cannot be a passing result. `eligible_for_merge` requires both complete phases,
 all expected rejections, no client errors and confirmed cleanup; the script
-does not access GitHub. Hardware execution and report review are pending.
+does not access GitHub. The user's hardware run and independent log review
+passed as documented below.
+
+## Final hardware acceptance (2026-11-09)
+
+The user ran `RD6006P_final_diagnostics_v1` on the RD6006P/UniSoft original
+ESP-12F with firmware `1.7.0-taxom.9`, UART 115200 and Modbus unit 1. The
+submitted `20261109_122340_14580.zip` reports PASS after 674.078 seconds.
+Independent inspection of `operations.csv`, `events.jsonl`, recovery data and
+raw diagnostic snapshots confirmed:
+
+- Both OFF/ON diagnostic phases completed all three 10-step load cycles.
+  All 66 confirmed commands, including closing OFF and valid-zero checks,
+  had fresh V/I/output observations from both TCP readers and the web client.
+  The three observers each recorded 237 field confirmations; none were missing.
+- All 13,785 CSV rows succeeded. There were 12,882 TCP read operations and
+  629 web status polls, with one connection per TCP client and no reconnects.
+- All 84 negative cases passed: 29 HTTP plus 13 Modbus rejections in each
+  mode, with unchanged live setpoints/output and protected settings.
+- The readers observed only expected voltage setpoints 0/2080/2340/2600,
+  current setpoints 0/250/375/500, and output values 0/1. ON voltage tracked
+  the requested profile in unloaded CV operation.
+- Fresh cleanup reads confirmed restoration to 2.600 V / 0.0500 A, output
+  OFF and diagnostics OFF, plus unchanged timezone/UART and protected settings.
+- Detailed UART and timing counters froze while OFF and advanced while ON.
+  No clock checks or clock writes ran during either measured phase.
+
+| Metric | Diagnostics OFF | Diagnostics ON |
+| --- | ---: | ---: |
+| Measured phase duration | 329.141 s | 335.359 s |
+| TCP-reader median request time, both readers | 16 ms | 16 ms |
+| TCP-reader 95th percentile, both readers | 94 ms | 94 ms |
+| Web status median | 157 ms | 156 ms |
+| Web status 95th percentile | 1187.3 ms | 1188 ms |
+| Maximum all-client confirmation time | 4.484 s | 5.875 s |
+| TCP read retries / recovered | 106 / 106 | 91 / 91 |
+| Local read retries / recovered | 18 / 18 | 23 / 23 |
+| Terminal gateway/local/web failures | 0 | 0 |
+
+The all-client time includes the deliberate one-second settling allowance and
+reader/web polling schedules. This single run shows no change in typical TCP
+or web status latency attributable to enabled tracing; it does not measure
+ESP CPU utilization or establish a general performance bound. First-attempt
+UART failures remain: all 197 TCP and 41 local retries within the phases
+recovered. The ON phase recorded 30 CRC-bad parser chunks and two short chunks,
+not proof of 30 distinct physical-line errors. No reset, capture overflow,
+terminal failure or unexpected state was observed. An external voltage meter,
+constant-current load test and long-duration endurance run were outside scope.
+
+The runtime validation passed on hardware, and the source checks include
+82 ASan/UBSan firmware checks, 20 final-tester fault-injection checks and 12
+legacy desktop-tool checks. This fulfills the agreed final acceptance before
+integrating the development branch into main while preserving its commits.
