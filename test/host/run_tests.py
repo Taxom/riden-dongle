@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         subprocess.run(cmd,check=True)
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
-        assert data['version']=='1.7.0-taxom.6' and data['requests']==10
+        assert data['version']=='1.7.0-taxom.7' and data['requests']==10
         assert data['read_retries']==data['recovered_reads']==10
         assert data['uart']['tcp_timeouts']==data['uart']['timeouts_no_rx']==10
         assert len(data['uart']['recent_timeouts'])==8

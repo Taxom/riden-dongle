@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.6**.
+Candidate firmware version: **1.7.0-taxom.7**.
 
 ## Observed problem
 
@@ -61,6 +61,13 @@ The binary crossed 512 KiB at `.4` (523,872 bytes for `.3`, 524,624 for `.4`,
 525,712 for `.5`), while the first eight boot-header bytes remained identical
 (`e902024080f41040`). This is an observation, not proof of an image-size cause;
 the new flash/layout diagnostics can help assess that hypothesis.
+
+The user then confirmed a successful automatic reboot installing `.6`, followed
+by another successful `.6` to `.6` update without power-cycling the PSU. The
+second update exercised the new update/restart path on the actual module.
+This verifies that path in the reported test; it does not identify the exact
+cause of the earlier failures. `taxom.7` adds only a navigation link to the
+existing diagnostics endpoint and its version/build metadata.
 
 ## Changes
 
@@ -151,7 +158,7 @@ with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```sh
 python -m pip install -r requirements.txt
-VERSION=1.7.0-taxom.6 pio run -e esp12e
+VERSION=1.7.0-taxom.7 pio run -e esp12e
 python test/host/run_tests.py
 ```
 
@@ -166,12 +173,12 @@ set `ASAN_OPTIONS=detect_leaks=0`. Address/undefined-behavior checks remain on.
 
 ## First hardware test
 
-`taxom.5` passed the full concurrent control/web test. `taxom.6` retains those
-changes and hardens HTTP update/restart and optional mDNS startup; its actual
-OTA reset/boot still requires a test on the physical module.
+`taxom.5` passed the full concurrent control/web test, and the user confirmed
+a successful `.6` to `.6` self-update/reboot on the physical module.
+`taxom.7` adds the diagnostics navigation link to those changes.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
-   to upload `firmware_esp12e_1_7_0-taxom_6.bin` and reboot the dongle.
+   to upload `firmware_esp12e_1_7_0-taxom_7.bin` and reboot the dongle.
 2. Check the version on Home. For the user's existing wiring keep UniSoft
    TTL+EN, UART 115200 baud on both ends, and Modbus address 1.
 3. With the output off and no load, compare TestController and web readings
@@ -327,6 +334,14 @@ image. Consequently, installing `.6` from `.5` still uses the old restart
 handler. Test the new path on a subsequent upload (or by uploading `.6` again
 after `.6` is running). Do not treat a repaired countdown alone as proof of
 a reset: check version, uptime and reset reason from a fresh IP-based request.
+
+## Diagnostics navigation (taxom.7)
+
+The shared header includes a `Diagnostics` link to `/diagnostics/modbus`,
+visible on Home, Control, Configure and the other pages using that header.
+It opens the existing JSON snapshot in a new tab using `rel="noopener"`.
+No automatic refresh is added; the endpoint still issues no UART requests.
+Both the source mockup and its generated C header are updated together.
 
 For rollback, upload the original v1.7.0 ESP-12E binary through the same web
 page. The ESP UART bootloader and the user's original full flash backup
