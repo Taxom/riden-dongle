@@ -7,6 +7,7 @@
 #include <riden_modbus/riden_modbus.h>
 
 #include <Arduino.h>
+#include <cmath>
 #ifndef MOCK_RIDEN
 #ifdef MODBUS_USE_SOFWARE_SERIAL
 #include <SoftwareSerial.h>
@@ -42,7 +43,8 @@ bool RidenModbus::begin()
 #else
     SerialRuideng.begin(riden_config.get_uart_baudrate(), SERIAL_8N1);
 #endif
-    if (!modbus.begin(&SerialRuideng)) {
+    uart_monitor.begin(SerialRuideng, riden_config.get_uart_baudrate());
+    if (!modbus.begin(&uart_monitor)) {
         LOG_LN("Failed initializing ModbusRTU");
         return false;
     }
@@ -118,7 +120,7 @@ bool RidenModbus::loop()
         return false;
     }
 
-    modbus.task();
+    service_uart();
     return true;
 #endif
 }
@@ -336,7 +338,7 @@ bool RidenModbus::get_current_range(uint16_t &current_range)
 
 bool RidenModbus::set_current_range(const uint16_t current_range)
 {
-    if (!supports_current_ranges()) {
+    if (!supports_current_ranges() || current_range > 1) {
         return false; // model has no switchable current range (no i_multi_ranges)
     }
     // 6A / 12 A range for RD6012P.
@@ -656,6 +658,8 @@ bool RidenModbus::read_voltage(const Register reg, double &voltage)
 
 bool RidenModbus::write_voltage(const Register reg, const double voltage)
 {
+    if (!std::isfinite(voltage) || voltage < 0 || voltage > v_max || voltage * v_multi > 65535.0)
+        return false;
     const uint16_t value = voltage_to_value(voltage);
     return write_holding_register(reg, value);
 }
@@ -677,11 +681,13 @@ bool RidenModbus::read_current(const Register reg, double &current)
 
 bool RidenModbus::write_current(const Register reg, const double current)
 {
+    if (!std::isfinite(current) || current < 0 || current > i_max) return false;
     if (supports_current_ranges()) {
         uint16_t range;
-        if (read_holding_registers(Register::CurrentRange, &range))
-            update_i_multi_for_range(range);
+        if (!read_holding_registers(Register::CurrentRange, &range)) return false;
+        update_i_multi_for_range(range);
     }
+    if (current * i_multi > 65535.0) return false;
     const uint16_t value = current_to_value(current);
     return write_holding_register(reg, value);
 }
@@ -721,17 +727,74 @@ bool RidenModbus::wait_for_inactive()
         return false;
     }
     // Wait until no transaction is active or timeout has passed
-    unsigned long started_at = millis();
-    unsigned long wait_until = started_at + timeout;
+    // ModbusRTU owns the timeout (MODBUSRTU_TIMEOUT). Do not return while
+    // it still holds a pointer to a caller's stack buffer or callback.
     while (modbus.server()) {
         delay(1);
-        modbus.task();
-        if (millis() > wait_until) {
-            LOG_LN("Timed out waiting for response from power supply module");
-            return false;
-        }
+        service_uart();
     }
     return true;
+#endif
+}
+
+void RidenModbus::service_uart()
+{
+#ifndef MOCK_RIDEN
+#if defined(ESP8266) && !defined(MODBUS_USE_SOFWARE_SERIAL)
+    if (SerialRuideng.hasOverrun()) ++diagnostics.rx_overruns;
+    if (SerialRuideng.hasRxError()) ++diagnostics.rx_errors;
+#endif
+    const bool active = modbus.server() != 0;
+    if (!active) {
+        // An expired transaction has no destination. Drain late bytes here
+        // instead of feeding short/unsolicited frames to the RTU parser.
+        while (SerialRuideng.available()) {
+            SerialRuideng.read();
+            ++diagnostics.discarded_bytes;
+            last_uart_completion_us = micros();
+            uart_completed = true;
+        }
+        return;
+    }
+    uart_monitor.begin_frame();
+    modbus.task();
+    uart_monitor.end_frame();
+    if (!modbus.server()) {
+        uart_monitor.finish_attempt();
+        last_uart_completion_us = micros();
+        uart_completed = true;
+    }
+#endif
+}
+
+bool RidenModbus::prepare_request()
+{
+#ifdef MOCK_RIDEN
+    return true;
+#else
+    if (!wait_for_inactive()) return false;
+    // The RTU library detects the end of an incoming frame, but does not
+    // pace new outgoing requests. Give the PSU time to rearm for both local
+    // and TCP operations. After a failure, allow a longer quiet interval.
+    const uint32_t guard_us = uart_recovery_pending ? 50000UL : 10000UL;
+    if (uart_recovery_pending) ++diagnostics.recovery_waits;
+    uint32_t quiet_since = uart_recovery_pending ? micros() : last_uart_completion_us;
+    const uint32_t started = micros();
+    bool need_guard = uart_completed || uart_recovery_pending;
+    do {
+        while (SerialRuideng.available()) {
+            SerialRuideng.read();
+            ++diagnostics.discarded_bytes;
+            quiet_since = micros();
+            need_guard = true;
+        }
+        if (!need_guard || uint32_t(micros() - quiet_since) >= guard_us) {
+            uart_recovery_pending = false;
+            return true;
+        }
+        if (uint32_t(micros() - started) >= 250000UL) return false;
+        delay(1);
+    } while (true);
 #endif
 }
 
@@ -741,15 +804,32 @@ bool RidenModbus::read_holding_registers(const uint16_t offset, uint16_t *value,
     memset(value, 0, numregs * sizeof(uint16_t));
     return true;
 #else
-    if (!wait_for_inactive()) {
-        return false;
+    // Local web/SCPI/clock reads need the same bounded recovery as TCP reads.
+    // Retry only a transport timeout, never a valid PSU exception. CRC-bad
+    // parser chunks already expire as EX_TIMEOUT in ModbusRTU.
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        if (!prepare_request()) break;
+        Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+        uart_monitor.set_origin(ObservedUart::Origin::Local);
+        const bool queued = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs,
+                                           [this, &result](Modbus::ResultCode code, uint16_t, void *) {
+                                               result = code;
+                                               uart_monitor.result(code);
+                                               if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
+                                               return true;
+                                           });
+        if (!queued) break;
+        // Keep the callback and caller's destination alive until completion.
+        if (!wait_for_inactive()) break;
+        if (result == Modbus::EX_SUCCESS) {
+            if (attempt) ++diagnostics.local_recovered_reads;
+            return true;
+        }
+        if (attempt || result != Modbus::EX_TIMEOUT) break;
+        ++diagnostics.local_read_retries;
     }
-    bool res = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs);
-    if (!res) {
-        return false;
-    }
-    // Wait until we receive an answer
-    return wait_for_inactive();
+    ++diagnostics.local_read_failures;
+    return false;
 #endif
 }
 
@@ -758,15 +838,23 @@ bool RidenModbus::write_holding_register(const uint16_t offset, const uint16_t v
 #ifdef MOCK_RIDEN
     return true;
 #else  
-    if (!wait_for_inactive()) {
+    if (!prepare_request()) {
         return false;
     }
-    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value);
+    Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    uart_monitor.set_origin(ObservedUart::Origin::Local);
+    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value,
+                              [this, &result](Modbus::ResultCode code, uint16_t, void *) {
+                                  result = code;
+                                  uart_monitor.result(code);
+                                  if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
+                                  return true;
+                              });
     if (!res) {
         return false;
     }
     // Wait until we receive an answer
-    return wait_for_inactive();
+    return wait_for_inactive() && result == Modbus::EX_SUCCESS;
 #endif
 }
 
@@ -775,15 +863,23 @@ bool RidenModbus::write_holding_registers(const uint16_t offset, uint16_t *value
 #ifdef MOCK_RIDEN
     return true;
 #else
-    if (!wait_for_inactive()) {
+    if (!prepare_request()) {
         return false;
     }
-    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value, numregs);
+    Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    uart_monitor.set_origin(ObservedUart::Origin::Local);
+    bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value, numregs,
+                              [this, &result](Modbus::ResultCode code, uint16_t, void *) {
+                                  result = code;
+                                  uart_monitor.result(code);
+                                  if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
+                                  return true;
+                              });
     if (!res) {
         return false;
     }
     // Wait until we receive an answer
-    return wait_for_inactive();
+    return wait_for_inactive() && result == Modbus::EX_SUCCESS;
 #endif
 }
 

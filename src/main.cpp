@@ -5,6 +5,7 @@
 #include <riden_config/riden_config.h>
 #include <riden_http_server/riden_http_server.h>
 #include <riden_logging/riden_logging.h>
+#include <riden_logging/clock_sync_state.h>
 #include <riden_modbus/riden_modbus.h>
 #include <riden_modbus_bridge/riden_modbus_bridge.h>
 #include <riden_scpi/riden_scpi.h>
@@ -33,9 +34,6 @@ using namespace RidenDongle;
 
 static Ticker led_ticker;
 static char hostname[100];
-
-static bool has_time = false;
-static bool did_update_time = false;
 
 static bool connected = false;
 
@@ -151,9 +149,9 @@ static bool connect_wifi(const char *hostname)
         experimental::ESP8266WiFiGratuitous::stationKeepAliveSetIntervalMs();
         if (hostname != nullptr) {
             if (!MDNS.begin(hostname)) {
-                while (true) {
-                    delay(100);
-                }
+                // Service discovery is optional. Keep HTTP/Modbus by IP
+                // available instead of hanging startup after a warm reset.
+                LOG_LN("mDNS unavailable; continuing with IP access");
             }
             String tz = riden_config.get_timezone_spec();
             if (tz.length() > 0) {
@@ -177,20 +175,57 @@ static bool connect_wifi(const char *hostname)
     return wifi_connected;
 }
 
+static void synchronize_clock_if_output_off()
+{
+    auto &clock = clock_sync_state();
+    if (!clock.pending) return;
+    const uint32_t now_ms = millis();
+    if (clock.checked && uint32_t(now_ms - clock.last_check_ms) < 5000UL) return;
+    clock.checked = true;
+    clock.last_check_ms = now_ms;
+    ++clock.checks;
+
+    // Confirm the current output state over the same serialized UART.
+    // A failed read is unknown, never permission to write the clock.
+    bool output_on = true;
+    clock.output_known = riden_modbus.get_output_on(output_on);
+    if (!clock.output_known) {
+        ++clock.output_read_failures;
+        return;
+    }
+    clock.output_on = output_on;
+    if (output_on) {
+        ++clock.deferred_output_on;
+        return;
+    }
+
+    // No network command handler runs between this fresh OFF check and
+    // the write. A later physical key press cannot be made atomic with RTU.
+    // Clear before writing so a new NTP event during the write stays pending.
+    clock.pending = false;
+    time_t now;
+    tm local_time;
+    time(&now);
+    localtime_r(&now, &local_time);
+    LOG_LN("Setting PSU clock with output off");
+    ++clock.writes;
+    clock.last_write_ms = millis();
+    if (riden_modbus.set_clock(local_time)) {
+        ++clock.successes;
+    } else {
+        ++clock.write_failures;
+        clock.pending = true;
+    }
+}
+
 void loop()
 {
+    ScopedTiming timing(main_loop_timing());
+    // Finish a requested restart before any UART polling, clock writes or
+    // network command handling. The HTTP response callback has returned.
+    if (http_server.handle_pending_restart()) return;
     if (connected) {
-        if (has_time && !did_update_time) {
-            LOG_LN("Setting PSU clock");
-            // Read time and convert to local timezone
-            time_t now;
-            tm tm;
-            time(&now);
-            localtime_r(&now, &tm);
-
-            riden_modbus.set_clock(tm);
-            did_update_time = true;
-        }
+        synchronize_clock_if_output_off();
 
         MDNS.update();
         riden_modbus.loop();
@@ -200,6 +235,7 @@ void loop()
         vxi_server.loop();
     }
     http_server.loop();
+    if (http_server.restart_pending()) return;
     ArduinoOTA.handle();
 }
 
@@ -219,5 +255,5 @@ void wifi_manager_config_mode_callback(WiFiManager *myWiFiManager)
 void on_time_received()
 {
     LOG_LN("Time has been received");
-    has_time = true;
+    clock_sync_state().pending = true;
 }

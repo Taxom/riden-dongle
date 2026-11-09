@@ -5,6 +5,7 @@
 #include "http_static.h"
 #include <riden_config/riden_config.h>
 #include <riden_http_server/riden_http_server.h>
+#include <riden_http_server/setpoint_input.h>
 #include <riden_logging/riden_logging.h>
 #include <vxi11_server/vxi_server.h>
 
@@ -126,6 +127,7 @@ bool RidenHttpServer::begin()
               std::bind(&RidenHttpServer::handle_firmware_update_post, this));
     server.on("/lxi/identification", HTTPMethod::HTTP_GET, std::bind(&RidenHttpServer::handle_lxi_identification, this));
     server.on("/qps/modbus/", HTTPMethod::HTTP_GET, std::bind(&RidenHttpServer::handle_modbus_qps, this));
+    server.on("/diagnostics/modbus", HTTPMethod::HTTP_GET, std::bind(&RidenHttpServer::handle_modbus_diagnostics, this));
     server.onNotFound(std::bind(&RidenHttpServer::handle_not_found, this));
     server.begin(port());
 
@@ -141,6 +143,7 @@ bool RidenHttpServer::begin()
 
 void RidenHttpServer::loop(void)
 {
+    ScopedTiming timing(http_poll_time);
     server.handleClient();
 }
 
@@ -291,12 +294,17 @@ void RidenHttpServer::handle_config_get()
         }
     }
     server.sendContent_P(HTML_CONFIG_BODY_3);
+    if (riden_config.get_diagnostics_enabled()) server.sendContent(" checked");
+    server.sendContent_P(HTML_CONFIG_BODY_4);
     server.sendContent_P(HTML_FOOTER);
     server.sendContent("");
 }
 
 void RidenHttpServer::handle_config_post()
 {
+    const String old_timezone = riden_config.get_timezone_name();
+    const uint32_t old_baudrate = riden_config.get_uart_baudrate();
+    const bool old_diagnostics = riden_config.get_diagnostics_enabled();
     String tz = server.arg("timezone");
     String uart_baudrate_string = server.arg("uart_baudrate");
     uint32_t uart_baudrate = std::strtoull(uart_baudrate_string.c_str(), nullptr, 10);
@@ -304,7 +312,14 @@ void RidenHttpServer::handle_config_post()
     LOG_F("Selected baudrate: %u\r\n", uart_baudrate);
     riden_config.set_timezone_name(tz);
     riden_config.set_uart_baudrate(uart_baudrate);
-    riden_config.commit();
+    riden_config.set_diagnostics_enabled(server.arg("diagnostics_enabled") == "1");
+    if (!riden_config.commit()) {
+        riden_config.set_timezone_name(old_timezone);
+        riden_config.set_uart_baudrate(old_baudrate);
+        riden_config.set_diagnostics_enabled(old_diagnostics);
+        server.send(500, "text/plain", "Failed to save configuration; settings not applied");
+        return;
+    }
 
     send_redirect_self();
 }
@@ -312,23 +327,40 @@ void RidenHttpServer::handle_config_post()
 void RidenHttpServer::handle_firmware_update_post()
 {
     HTTPUpload &upload = server.upload();
+    auto &state = firmware_update_state();
 
     if (upload.status == UPLOAD_FILE_START) {
-        // if(_debug) Serial.setDebugOutput(true);
-        uint32_t maxSketchSpace;
-
-        WiFiUDP::stopAll();
-        maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
-
-        if (!Update.begin(maxSketchSpace)) { // start with max available size
+        state.started = true;
+        state.finished = state.failed = state.success = false;
+        state.received_bytes = state.written_bytes = 0;
+        const uint32_t free_space = ESP.getFreeSketchSpace();
+        const uint32_t max_space = free_space > 0x1000 ? (free_space - 0x1000) & 0xFFFFF000 : 0;
+        if (!Update.begin(max_space)) {
+            state.failed = true;
             Update.end();
         }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
-        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        state.received_bytes += upload.currentSize;
+        if (!state.started || state.failed) {
+            state.failed = true;
+        } else {
+            const size_t written = Update.write(upload.buf, upload.currentSize);
+            state.written_bytes += written;
+            if (written != upload.currentSize) state.failed = true;
         }
     } else if (upload.status == UPLOAD_FILE_END) {
-        Update.end(true);
+        state.finished = true;
+        if (state.started && !state.failed && state.received_bytes &&
+            state.received_bytes == state.written_bytes) {
+            state.success = Update.end(true);
+        } else {
+            Update.end();
+            state.success = false;
+        }
+        state.failed = state.failed || !state.success || Update.hasError();
     } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        state.failed = true;
+        state.success = false;
         Update.end();
     }
     yield();
@@ -336,26 +368,51 @@ void RidenHttpServer::handle_firmware_update_post()
 
 void RidenHttpServer::finish_firmware_update_post()
 {
-    if (Update.hasError()) {
+    const auto &state = firmware_update_state();
+    if (!state.started || !state.finished || !state.success || state.failed || Update.hasError()) {
         server.client().setNoDelay(true);
+        server.sendHeader("Connection", "close");
         server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-        server.send(200, "text/html", HTML_HEADER);
+        server.send(500, "text/html", HTML_HEADER);
         server.sendContent_P(HTML_DONGLE_UPDATE_1);
-        server.sendContent(Update.getErrorString());
+        server.sendContent(Update.hasError() ? Update.getErrorString() : String("Firmware upload did not complete"));
         server.sendContent_P(HTML_DONGLE_UPDATE_2);
         server.sendContent_P(HTML_FOOTER);
         server.sendContent("");
     } else {
         server.client().setNoDelay(true);
-        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.sendHeader("Connection", "close");
+        server.setContentLength(strlen_P(HTML_HEADER) + strlen_P(HTML_REBOOTING_DONGLE_UPDATE_BODY) + strlen_P(HTML_FOOTER));
         server.send(200, "text/html", HTML_HEADER);
         server.sendContent_P(HTML_REBOOTING_DONGLE_UPDATE_BODY);
         server.sendContent_P(HTML_FOOTER);
         server.sendContent("");
-        delay(100);
-        server.client().stop();
-        ESP.restart();
+        request_restart();
     }
+}
+
+void RidenHttpServer::request_restart()
+{
+    auto &state = firmware_update_state();
+    if (!state.restart_pending) state.restart_requested_ms = millis();
+    state.restart_pending = true;
+}
+
+bool RidenHttpServer::handle_pending_restart()
+{
+    const auto &state = firmware_update_state();
+    if (!state.restart_pending) return false;
+    // Let the HTTP handler and its parser unwind, then allow response ACKs.
+    if (uint32_t(millis() - state.restart_requested_ms) < 500UL) {
+        delay(1);
+        return true;
+    }
+    auto client = server.client();
+    // Never let an unacknowledged browser response indefinitely defer reboot.
+    if (!client.stop(200)) client.abort();
+    WiFiUDP::stopAll();
+    ESP.restart();
+    return true;
 }
 
 void RidenHttpServer::handle_disconnect_client_post()
@@ -393,8 +450,7 @@ void RidenHttpServer::handle_reboot_dongle_get()
     }
     server.sendContent_P(HTML_FOOTER);
     server.sendContent("");
-    delay(500);
-    ESP.reset();
+    request_restart();
     delay(1000);
 }
 
@@ -409,7 +465,14 @@ void RidenHttpServer::handle_control_get(void)
 
 void RidenHttpServer::handle_status_get(void)
 {
+    send_status("Failed to read power supply registers");
+}
+
+bool RidenHttpServer::send_status(const char *failure_message)
+{
+    ScopedTiming timing(status_time);
     AllValues all_values;
+    bool success = false;
     // get a subset of the values, reading in bulk to be fast
     // Make sure this is below 800ms, because otherwise the graph will suffer
     if (modbus.is_connected() && modbus.get_all_values(all_values, true)) {
@@ -441,16 +504,23 @@ void RidenHttpServer::handle_status_get(void)
         s += ",\"precision\": " + String(modbus.get_precision());
         s += "}";
         server.send(200, "application/json", s);
+        success = true;
     } else {
-        server.send(500, "text/plain", "Not connected to power supply");
+        ++web_diagnostics().status_read_failures;
+        server.send(500, "text/plain", modbus.is_connected() ? failure_message : "Not connected to power supply");
     }
     server.sendContent("");
+    return success;
 }
 
 void RidenHttpServer::handle_set_i()
 {
     String s = server.arg("plain");
-    double v = std::strtod(s.c_str(), nullptr);
+    double v;
+    if (!parse_setpoint_input(s, modbus.get_max_current(), v)) {
+        server.send(400, "text/plain", "Invalid current: expected a finite decimal within the PSU range");
+        return;
+    }
     if (modbus.is_connected() && modbus.set_current_set(v)) {
         server.send(200, "text/plain", "OK");
     } else {
@@ -461,7 +531,11 @@ void RidenHttpServer::handle_set_i()
 void RidenHttpServer::handle_set_i_range()
 {
     String s = server.arg("plain");
-    uint16_t range = (uint16_t)strtoul(s.c_str(), nullptr, 10); // 0 = 6A, 1 = 12A
+    if (!modbus.supports_current_ranges() || (s != "0" && s != "1")) {
+        server.send(400, "text/plain", "Invalid or unsupported current range");
+        return;
+    }
+    uint16_t range = s == "1" ? 1 : 0;
     if (modbus.is_connected() && modbus.set_current_range(range)) {
         server.send(200, "text/plain", "OK");
     } else {
@@ -472,7 +546,11 @@ void RidenHttpServer::handle_set_i_range()
 void RidenHttpServer::handle_set_v()
 {
     String s = server.arg("plain");
-    double v = std::strtod(s.c_str(), nullptr);
+    double v;
+    if (!parse_setpoint_input(s, modbus.get_max_voltage(), v)) {
+        server.send(400, "text/plain", "Invalid voltage: expected a finite decimal within the PSU range");
+        return;
+    }
     if (modbus.is_connected() && modbus.set_voltage_set(v)) {
         server.send(200, "text/plain", "OK");
     } else {
@@ -482,20 +560,37 @@ void RidenHttpServer::handle_set_v()
 
 void RidenHttpServer::handle_toggle_out()
 {
-    if (modbus.is_connected()) {
-        bool get_output_on;
-        if (!modbus.get_output_on(get_output_on)) {
-            get_output_on = false;
-        }
-        if (modbus.set_output_on(!get_output_on)) {
-            // and reply with full data set
-            handle_status_get();
-        } else {
-            server.send(500, "text/plain", "Failed to toggle output");
-        }
-    } else {
+    auto &web = web_diagnostics();
+    ScopedTiming timing(web.toggle_time);
+    ++web.toggle_requests;
+    if (!modbus.is_connected()) {
         server.send(500, "text/plain", "Not connected to power supply");
+        return;
     }
+    bool output_on;
+    if (!modbus.get_output_on(output_on)) {
+        // Unknown is not OFF. Never enable the output as a fallback.
+        ++web.toggle_state_read_failures;
+        server.send(500, "text/plain", "Failed to read output state; no output command sent");
+        return;
+    }
+    const bool target = !output_on;
+    if (!modbus.set_output_on(target)) {
+        ++web.toggle_write_ack_failures;
+        // The PSU may have applied a write whose acknowledgement was lost.
+        // Read back the target; do not resend the write or toggle again.
+        bool confirmed_on;
+        if (!modbus.get_output_on(confirmed_on) || confirmed_on != target) {
+            ++web.toggle_unconfirmed_writes;
+            server.send(500, "text/plain", "Output change not confirmed; verify output before retrying");
+            return;
+        }
+        ++web.toggle_reconciled_writes;
+    }
+    // Preserve the control page's full JSON contract. If fresh telemetry
+    // still fails after its bounded retries, distinguish that from a failed
+    // command: it is not permission for the caller to repeat a toggle.
+    send_status("Output command completed, but status read failed; verify output before retrying");
 }
 
 void RidenHttpServer::send_redirect_root()
@@ -649,6 +744,142 @@ void RidenHttpServer::send_info_row(const String key, const String value)
 void RidenHttpServer::handle_not_found()
 {
     server.send(404, "text/plain", "404: Not found");
+}
+
+static void append_timing(String &json, const char *name, const TimingStats &stats)
+{
+    json += ",\"";
+    json += name;
+    json += "\":{\"count\":";
+    json += String(stats.count);
+    json += ",\"min_us\":";
+    json += String(stats.count ? stats.min_us : 0);
+    json += ",\"avg_us\":";
+    json += String(stats.average_us());
+    json += ",\"max_us\":";
+    json += String(stats.max_us);
+    json += ",\"last_us\":";
+    json += String(stats.last_us);
+    json += "}";
+}
+
+void RidenHttpServer::handle_modbus_diagnostics()
+{
+    ScopedTiming timing(diagnostics_time);
+    // Counters only: observing diagnostics must not add UART requests.
+    const auto &tcp = bridge.get_diagnostics();
+    const auto &uart = modbus.get_diagnostics();
+    char counters[900];
+    snprintf(counters, sizeof(counters),
+             "{\"version\":\"%s\",\"uptime_ms\":%lu,"
+             "\"requests\":%lu,\"read_retries\":%lu,\"recovered_reads\":%lu,"
+             "\"uart_timeouts\":%lu,\"invalid_responses\":%lu,\"uart_exceptions\":%lu,"
+             "\"gateway_failures\":%lu,\"last_failed_function\":%u,"
+             "\"last_failed_register\":%u,\"last_failure_code\":%u,"
+             "\"recovery_waits\":%lu,\"discarded_bytes\":%lu,"
+             "\"rx_overruns\":%lu,\"rx_errors\":%lu",
+             RidenDongle::version_string, (unsigned long)millis(),
+             (unsigned long)tcp.requests, (unsigned long)tcp.read_retries,
+             (unsigned long)tcp.recovered_reads, (unsigned long)tcp.uart_timeouts,
+             (unsigned long)tcp.invalid_responses, (unsigned long)tcp.uart_exceptions,
+             (unsigned long)tcp.gateway_failures, tcp.last_failed_function,
+             tcp.last_failed_register, tcp.last_failure_code,
+             (unsigned long)uart.recovery_waits, (unsigned long)uart.discarded_bytes,
+             (unsigned long)uart.rx_overruns, (unsigned long)uart.rx_errors);
+    String json;
+    json.reserve(4096);
+    json += counters;
+    json += ",\"diagnostics_enabled\":";
+    json += detailed_diagnostics_enabled() ? "true" : "false";
+    json += ",\"setpoint_validation\":\"strict_v1\"";
+    json += ",\"rejected_requests\":" + String(tcp.rejected_requests);
+    json += ",\"detail_scope\":\"enabled_periods_since_boot\"";
+
+    const auto &monitor = modbus.get_uart_monitor();
+    const auto &rx = monitor.get_diagnostics();
+    json += ",\"uart\":{\"attempts\":" + String(rx.attempts);
+    json += ",\"tcp_attempts\":" + String(rx.tcp_attempts);
+    json += ",\"local_attempts\":" + String(rx.local_attempts);
+    json += ",\"tcp_timeouts\":" + String(rx.tcp_timeouts);
+    json += ",\"local_timeouts\":" + String(rx.local_timeouts);
+    json += ",\"timeouts_no_rx\":" + String(rx.timeouts_no_rx);
+    json += ",\"timeouts_with_rx\":" + String(rx.timeouts_with_rx);
+    json += ",\"rx_bytes\":" + String(rx.rx_bytes);
+    json += ",\"rx_frames\":" + String(rx.rx_frames);
+    json += ",\"crc_errors\":" + String(rx.crc_errors);
+    json += ",\"short_frames\":" + String(rx.short_frames);
+    json += ",\"capture_overflows\":" + String(rx.capture_overflows);
+    append_timing(json, "first_byte", rx.first_byte);
+    append_timing(json, "crc_valid_frame_read", rx.crc_valid_frame_read);
+    append_timing(json, "attempt_wait", rx.attempt_wait);
+    json += ",\"reply_buckets_le_ms\":[5,10,20,50,100,500,null],\"reply_buckets\":[";
+    for (unsigned i = 0; i < 7; ++i) {
+        if (i) json += ",";
+        json += String(rx.reply_buckets[i]);
+    }
+    json += "],\"recent_timeouts\":[";
+    for (unsigned i = 0; i < rx.timeout_count; ++i) {
+        const auto &event = monitor.timeout(i);
+        if (i) json += ",";
+        json += "{\"at_ms\":" + String(event.at_ms);
+        json += ",\"source\":\"";
+        json += event.origin == ObservedUart::Origin::Tcp ? "tcp" : "local";
+        json += "\",\"function\":" + String(event.function);
+        json += ",\"register\":" + String(event.reg);
+        json += ",\"argument\":" + String(event.argument);
+        json += ",\"duration_us\":" + String(event.duration_us);
+        json += ",\"rx_seen\":";
+        json += event.rx_seen ? "true" : "false";
+        json += ",\"rx_bytes\":" + String(event.rx_bytes);
+        json += ",\"bad_crc_frames\":" + String(event.bad_crc_frames) + "}";
+    }
+    json += "]},\"local_reads\":{\"retries\":" + String(uart.local_read_retries);
+    json += ",\"recovered\":" + String(uart.local_recovered_reads);
+    json += ",\"failures\":" + String(uart.local_read_failures);
+    const auto &web = web_diagnostics();
+    json += "},\"web\":{\"status_read_failures\":" + String(web.status_read_failures);
+    json += ",\"toggle_requests\":" + String(web.toggle_requests);
+    json += ",\"toggle_state_read_failures\":" + String(web.toggle_state_read_failures);
+    json += ",\"toggle_write_ack_failures\":" + String(web.toggle_write_ack_failures);
+    json += ",\"toggle_reconciled_writes\":" + String(web.toggle_reconciled_writes);
+    json += ",\"toggle_unconfirmed_writes\":" + String(web.toggle_unconfirmed_writes);
+    json += "},\"timing\":{\"units\":\"microseconds\",\"wall_time_includes_waits\":true";
+    append_timing(json, "tcp_poll", tcp.poll_time);
+    append_timing(json, "tcp_request", tcp.request_time);
+    append_timing(json, "http_poll", http_poll_time);
+    append_timing(json, "http_status", status_time);
+    append_timing(json, "http_toggle", web.toggle_time);
+    append_timing(json, "http_diagnostics", diagnostics_time);
+    append_timing(json, "main_loop", main_loop_timing());
+    const auto &clock = clock_sync_state();
+    json += "},\"clock_sync\":{\"policy\":\"output_off_only\",\"pending\":";
+    json += clock.pending ? "true" : "false";
+    json += ",\"last_check_output_known\":";
+    json += clock.output_known ? "true" : "false";
+    json += ",\"last_check_output_on\":";
+    json += clock.output_on ? "true" : "false";
+    json += ",\"checks\":" + String(clock.checks);
+    json += ",\"deferred_output_on\":" + String(clock.deferred_output_on);
+    json += ",\"output_read_failures\":" + String(clock.output_read_failures);
+    json += ",\"writes\":" + String(clock.writes);
+    json += ",\"successes\":" + String(clock.successes);
+    json += ",\"write_failures\":" + String(clock.write_failures);
+    json += ",\"last_check_ms\":" + String(clock.last_check_ms);
+    json += ",\"last_write_ms\":" + String(clock.last_write_ms);
+    json += "},\"system\":{\"free_heap_bytes\":" + String(ESP.getFreeHeap());
+    json += ",\"psu_connected\":";
+    json += modbus.is_connected() ? "true" : "false";
+    const auto *reset_info = ESP.getResetInfoPtr();
+    json += ",\"reset_reason_code\":" + String(reset_info ? reset_info->reason : 0xFFFFFFFFUL);
+    json += ",\"flash_real_bytes\":" + String(ESP.getFlashChipRealSize());
+    json += ",\"flash_configured_bytes\":" + String(ESP.getFlashChipSize());
+    json += ",\"sketch_bytes\":" + String(ESP.getSketchSize());
+    json += ",\"free_sketch_space_bytes\":" + String(ESP.getFreeSketchSpace());
+    json += ",\"largest_free_block_bytes\":" + String(ESP.getMaxFreeBlockSize());
+    json += ",\"wifi_rssi_dbm\":" + String(WiFi.RSSI());
+    json += ",\"cpu_mhz\":" + String(ESP.getCpuFreqMHz()) + "}}";
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", json);
 }
 
 void RidenHttpServer::handle_modbus_qps()
