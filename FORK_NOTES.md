@@ -346,3 +346,15 @@ Both the source mockup and its generated C header are updated together.
 For rollback, upload the original v1.7.0 ESP-12E binary through the same web
 page. The ESP UART bootloader and the user's original full flash backup
 remain the recovery route if web updating is unavailable.
+
+## Desktop test and original version history
+
+The standalone Windows/Python multi-client test is in
+[`tools/multi_client_test`](tools/multi_client_test/README_RU.txt), with its
+12 offline emulator checks in the adjacent `tests` directory.
+
+Versions 1 through 7 have separate `versions/1.7.0-taxom.N` branches.
+[`history/README.md`](history/README.md) maps each source snapshot to its
+published commit and its original local commit. The accompanying Git bundle
+preserves the original objects, dates and version tags without squashing
+any development stage.

@@ -24,6 +24,8 @@ jobs:
           VERSION: 1.7.0-taxom.7
       - name: Test overlapping TCP and local UART transactions
         run: python test/host/run_tests.py
+      - name: Test desktop multi-client control tool offline
+        run: python tools/multi_client_test/tests/test_multi_client_tool.py
       - name: Record firmware checksum
         run: sha256sum .pio/build/esp12e/firmware_*.bin > .pio/build/esp12e/SHA256SUMS
       - uses: actions/upload-artifact@v4
