@@ -172,10 +172,28 @@ int main(int argc,char **argv) {
     check_packet(tc,42,{0x83,2});
     assert(Serial.requests.size()==before_exception+1);
     uint16_t value=0xcafe;exception_next=2;
+    const auto before_local_exception=Serial.requests.size();
     assert(!bus.read_holding_registers(0,&value));assert(value==0xcafe);
+    assert(Serial.requests.size()==before_local_exception+1);
     wrong_count_next=true;
     assert(!bus.read_holding_registers(0,&value));assert(value==0xcafe);
     std::cout<<"PASS: RTU exceptions forwarded/reported as failures\n";
+
+    const auto retries_before=bus.get_diagnostics().local_read_retries;
+    const auto recovered_before=bus.get_diagnostics().local_recovered_reads;
+    const auto local_requests_before=Serial.requests.size();
+    drop_next=1;
+    assert(bus.read_holding_registers(0,&value) && value==60065);
+    assert(Serial.requests.size()==local_requests_before+2);
+    assert(bus.get_diagnostics().local_read_retries==retries_before+1);
+    assert(bus.get_diagnostics().local_recovered_reads==recovered_before+1);
+    std::cout<<"PASS: one lost local read retries exactly once and reports recovery\n";
+
+    corrupt_crc_next=true;value=0xcafe;
+    assert(bus.read_holding_registers(11,&value) && value==0);
+    assert(bus.get_diagnostics().local_read_retries==retries_before+2);
+    assert(bus.get_diagnostics().local_recovered_reads==recovered_before+2);
+    std::cout<<"PASS: CRC-bad local read retries and preserves a genuine zero\n";
 
     const auto requests=Serial.requests.size();
     tcp.enqueue(100,43,{3,0,0,0,1},0);bridge.loop();
@@ -183,10 +201,10 @@ int main(int argc,char **argv) {
     std::cout<<"PASS: broadcast unit rejected without arming an interceptor\n";
 
     const auto local_timeouts_before=observed.get_diagnostics().local_timeouts;
-    drop_next=true;const auto started=host_time_us;
+    drop_next=2;const auto started=host_time_us;
     assert(!bus.read_holding_registers(0,&value));
     assert(host_time_us-started>=1000000);
-    assert(observed.get_diagnostics().local_timeouts==local_timeouts_before+1);
+    assert(observed.get_diagnostics().local_timeouts==local_timeouts_before+2);
     const auto &local_event=observed.timeout(observed.get_diagnostics().timeout_count-1);
     assert(local_event.origin==RidenDongle::ObservedUart::Origin::Local && !local_event.rx_seen);
     next_delay_us=700000;assert(bus.read_holding_registers(0,&value));assert(value==60065);

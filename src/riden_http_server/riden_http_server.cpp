@@ -411,8 +411,14 @@ void RidenHttpServer::handle_control_get(void)
 
 void RidenHttpServer::handle_status_get(void)
 {
+    send_status("Failed to read power supply registers");
+}
+
+bool RidenHttpServer::send_status(const char *failure_message)
+{
     ScopedTiming timing(status_time);
     AllValues all_values;
+    bool success = false;
     // get a subset of the values, reading in bulk to be fast
     // Make sure this is below 800ms, because otherwise the graph will suffer
     if (modbus.is_connected() && modbus.get_all_values(all_values, true)) {
@@ -444,10 +450,13 @@ void RidenHttpServer::handle_status_get(void)
         s += ",\"precision\": " + String(modbus.get_precision());
         s += "}";
         server.send(200, "application/json", s);
+        success = true;
     } else {
-        server.send(500, "text/plain", "Not connected to power supply");
+        ++web_diagnostics().status_read_failures;
+        server.send(500, "text/plain", modbus.is_connected() ? failure_message : "Not connected to power supply");
     }
     server.sendContent("");
+    return success;
 }
 
 void RidenHttpServer::handle_set_i()
@@ -485,20 +494,37 @@ void RidenHttpServer::handle_set_v()
 
 void RidenHttpServer::handle_toggle_out()
 {
-    if (modbus.is_connected()) {
-        bool get_output_on;
-        if (!modbus.get_output_on(get_output_on)) {
-            get_output_on = false;
-        }
-        if (modbus.set_output_on(!get_output_on)) {
-            // and reply with full data set
-            handle_status_get();
-        } else {
-            server.send(500, "text/plain", "Failed to toggle output");
-        }
-    } else {
+    auto &web = web_diagnostics();
+    ScopedTiming timing(web.toggle_time);
+    ++web.toggle_requests;
+    if (!modbus.is_connected()) {
         server.send(500, "text/plain", "Not connected to power supply");
+        return;
     }
+    bool output_on;
+    if (!modbus.get_output_on(output_on)) {
+        // Unknown is not OFF. Never enable the output as a fallback.
+        ++web.toggle_state_read_failures;
+        server.send(500, "text/plain", "Failed to read output state; no output command sent");
+        return;
+    }
+    const bool target = !output_on;
+    if (!modbus.set_output_on(target)) {
+        ++web.toggle_write_ack_failures;
+        // The PSU may have applied a write whose acknowledgement was lost.
+        // Read back the target; do not resend the write or toggle again.
+        bool confirmed_on;
+        if (!modbus.get_output_on(confirmed_on) || confirmed_on != target) {
+            ++web.toggle_unconfirmed_writes;
+            server.send(500, "text/plain", "Output change not confirmed; verify output before retrying");
+            return;
+        }
+        ++web.toggle_reconciled_writes;
+    }
+    // Preserve the control page's full JSON contract. If fresh telemetry
+    // still fails after its bounded retries, distinguish that from a failed
+    // command: it is not permission for the caller to repeat a toggle.
+    send_status("Output command completed, but status read failed; verify output before retrying");
 }
 
 void RidenHttpServer::send_redirect_root()
@@ -736,11 +762,22 @@ void RidenHttpServer::handle_modbus_diagnostics()
         json += ",\"rx_bytes\":" + String(event.rx_bytes);
         json += ",\"bad_crc_frames\":" + String(event.bad_crc_frames) + "}";
     }
-    json += "]},\"timing\":{\"units\":\"microseconds\",\"wall_time_includes_waits\":true";
+    json += "]},\"local_reads\":{\"retries\":" + String(uart.local_read_retries);
+    json += ",\"recovered\":" + String(uart.local_recovered_reads);
+    json += ",\"failures\":" + String(uart.local_read_failures);
+    const auto &web = web_diagnostics();
+    json += "},\"web\":{\"status_read_failures\":" + String(web.status_read_failures);
+    json += ",\"toggle_requests\":" + String(web.toggle_requests);
+    json += ",\"toggle_state_read_failures\":" + String(web.toggle_state_read_failures);
+    json += ",\"toggle_write_ack_failures\":" + String(web.toggle_write_ack_failures);
+    json += ",\"toggle_reconciled_writes\":" + String(web.toggle_reconciled_writes);
+    json += ",\"toggle_unconfirmed_writes\":" + String(web.toggle_unconfirmed_writes);
+    json += "},\"timing\":{\"units\":\"microseconds\",\"wall_time_includes_waits\":true";
     append_timing(json, "tcp_poll", tcp.poll_time);
     append_timing(json, "tcp_request", tcp.request_time);
     append_timing(json, "http_poll", http_poll_time);
     append_timing(json, "http_status", status_time);
+    append_timing(json, "http_toggle", web.toggle_time);
     append_timing(json, "http_diagnostics", diagnostics_time);
     append_timing(json, "main_loop", main_loop_timing());
     const auto &clock = clock_sync_state();

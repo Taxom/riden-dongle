@@ -99,6 +99,9 @@ class RidenModbus
         uint32_t discarded_bytes = 0;
         uint32_t rx_overruns = 0;
         uint32_t rx_errors = 0;
+        uint32_t local_read_retries = 0;
+        uint32_t local_recovered_reads = 0;
+        uint32_t local_read_failures = 0;
     };
     const Diagnostics &get_diagnostics() const { return diagnostics; }
     const ObservedUart &get_uart_monitor() const { return uart_monitor; }

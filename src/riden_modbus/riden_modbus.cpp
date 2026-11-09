@@ -799,23 +799,32 @@ bool RidenModbus::read_holding_registers(const uint16_t offset, uint16_t *value,
     memset(value, 0, numregs * sizeof(uint16_t));
     return true;
 #else
-    if (!prepare_request()) {
-        return false;
+    // Local web/SCPI/clock reads need the same bounded recovery as TCP reads.
+    // Retry only a transport timeout, never a valid PSU exception. CRC-bad
+    // parser chunks already expire as EX_TIMEOUT in ModbusRTU.
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        if (!prepare_request()) break;
+        Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+        uart_monitor.set_origin(ObservedUart::Origin::Local);
+        const bool queued = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs,
+                                           [this, &result](Modbus::ResultCode code, uint16_t, void *) {
+                                               result = code;
+                                               uart_monitor.result(code);
+                                               if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
+                                               return true;
+                                           });
+        if (!queued) break;
+        // Keep the callback and caller's destination alive until completion.
+        if (!wait_for_inactive()) break;
+        if (result == Modbus::EX_SUCCESS) {
+            if (attempt) ++diagnostics.local_recovered_reads;
+            return true;
+        }
+        if (attempt || result != Modbus::EX_TIMEOUT) break;
+        ++diagnostics.local_read_retries;
     }
-    Modbus::ResultCode result = Modbus::EX_TIMEOUT;
-    uart_monitor.set_origin(ObservedUart::Origin::Local);
-    bool res = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs,
-                              [this, &result](Modbus::ResultCode code, uint16_t, void *) {
-                                  result = code;
-                                  uart_monitor.result(code);
-                                  if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
-                                  return true;
-                              });
-    if (!res) {
-        return false;
-    }
-    // Wait until we receive an answer
-    return wait_for_inactive() && result == Modbus::EX_SUCCESS;
+    ++diagnostics.local_read_failures;
+    return false;
 #endif
 }
 

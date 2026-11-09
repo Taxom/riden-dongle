@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <type_traits>
@@ -17,6 +18,11 @@ class String : public std::string {
     String(const std::string &value) : std::string(value) {}
     template <class T, typename std::enable_if<std::is_arithmetic<T>::value, int>::type = 0>
     String(T value) : std::string(std::to_string(value)) {}
+    String(double value, unsigned digits) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "%.*f", int(digits), value);
+        assign(text);
+    }
 };
 using std::min;
 using std::max;

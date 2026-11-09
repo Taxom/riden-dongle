@@ -21,7 +21,7 @@ jobs:
       - name: Build ESP-12E / ESP-12F firmware
         run: pio run -e esp12e
         env:
-          VERSION: 1.7.0-taxom.4
+          VERSION: 1.7.0-taxom.5
       - name: Test overlapping TCP and local UART transactions
         run: python test/host/run_tests.py
       - name: Record firmware checksum

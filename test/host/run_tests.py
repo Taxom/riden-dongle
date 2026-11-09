@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         subprocess.run(cmd,check=True)
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
-        assert data['version']=='1.7.0-taxom.4' and data['requests']==10
+        assert data['version']=='1.7.0-taxom.5' and data['requests']==10
         assert data['read_retries']==data['recovered_reads']==10
         assert data['uart']['tcp_timeouts']==data['uart']['timeouts_no_rx']==10
         assert len(data['uart']['recent_timeouts'])==8
@@ -67,7 +67,23 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         assert data['clock_sync']['writes']==0 and data['clock_sync']['pending'] is False
         assert data['clock_sync']['last_check_output_known'] is False
         assert data['clock_sync']['last_check_output_on'] is True
+        assert data['local_reads']=={'retries':0,'recovered':0,'failures':0}
+        assert data['web']['toggle_reconciled_writes']==0
+        assert data['timing']['http_toggle']['count']==0
         print('PASS: production diagnostics handler JSON, HTTP send timing, no UART polling')
+        status=http_source[http_source.index('void RidenHttpServer::handle_status_get('):
+                           http_source.index('\nvoid RidenHttpServer::handle_set_i()')]
+        toggle=http_source[http_source.index('void RidenHttpServer::handle_toggle_out()'):
+                           http_source.index('\nvoid RidenHttpServer::send_redirect_root()')]
+        protection=http_source[http_source.index('static String protection_to_string('):
+                               http_source.index('\nstatic String outputmode_to_string(')]
+        control_test=tmp/'http_control.cpp'
+        control_test.write_text((root/'test/host/http_control.cpp').read_text().replace(
+            '// PRODUCTION_STATUS_AND_TOGGLE',protection+'\n'+status+'\n'+toggle))
+        cmd[cmd.index(str(http_test))]=str(control_test)
+        cmd[-1]=str(tmp/'http_control')
+        subprocess.run(cmd,check=True)
+        subprocess.run([str(tmp/'http_control')],check=True)
         main_source=(root/'src/main.cpp').read_text()
         clock_handler=main_source[main_source.index('static void synchronize_clock_if_output_off()'):
                                   main_source.index('\nvoid loop()')]

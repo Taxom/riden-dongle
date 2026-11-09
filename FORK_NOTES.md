@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.4**.
+Candidate firmware version: **1.7.0-taxom.5**.
 
 ## Observed problem
 
@@ -31,6 +31,20 @@ no RX bytes observed), two CRC-bad chunks, and no terminal gateway failures.
 CRC-valid frames were consumed in 6.93 ms on average, at most 16.95 ms.
 The remaining first-attempt failures are not yet explained. The user asked
 to defer automatic PSU clock writes until the output is confirmed OFF.
+
+The user's `taxom.4` clock test confirmed that an NTP update remained pending
+while output was ON, then performed one successful clock write after OFF.
+A 10-minute concurrent control run (`20261109_093040_8696.zip`) completed all
+60 transitions (30 Modbus, 30 web), with every transition observed by two
+independent readers and web. All three TCP sockets stayed connected, all
+11,215 TCP operations succeeded, and all 169 TCP read retries recovered.
+Web telemetry returned 36 HTTP errors in 575 polls. One web write returned
+"Failed to toggle output" despite applying the requested ON state: the UART
+monitor recorded a CRC-bad 8-byte FC6 acknowledgement, and a fresh Modbus
+read confirmed ON. The run added 68 CRC-bad parser chunks, 26 short chunks,
+and 206 UART timeouts (159 with no observed RX bytes). No clock check/write
+ran during this test. `taxom.5` adds local read recovery and reconciles this
+ambiguous web-write outcome; it does not establish the physical UART cause.
 
 ## Changes
 
@@ -65,6 +79,19 @@ to defer automatic PSU clock writes until the output is confirmed OFF.
   both attempts within the same TCP callback. Never automatically repeat
   a TCP write, replay cached values, or turn a failed read into a numeric zero.
   Valid PSU exception replies are forwarded without retrying.
+- From `taxom.5`, local FC3 reads also retry a transport timeout once, using
+  the same recovery quiet guard. Only the failed register block is repeated.
+  Valid PSU exceptions and rejected/malformed replies are not retried by
+  this local policy. Writes remain single-attempt operations.
+- A web toggle now fails without sending a write if the initial output
+  state cannot be read. Previously it treated unknown as OFF and could
+  enable the output unexpectedly. After a failed write acknowledgement,
+  read the output and accept success only if it matches the intended state;
+  never resend the write or perform a second toggle. If the outcome remains
+  unknown, return an explicit error. Distinguish a telemetry read failure
+  after an acknowledged/reconciled command from a failed command.
+- Export `local_reads` and `web` recovery/failure counters plus `http_toggle`
+  wall time in diagnostics. Existing TCP counters keep their previous meaning.
 - Add read-only `/diagnostics/modbus` JSON counters. Reading this endpoint
   does not poll the PSU or change any setting.
 - In `taxom.3`, observe the existing UART Stream passively to count CRC-bad
@@ -108,7 +135,7 @@ with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```sh
 python -m pip install -r requirements.txt
-VERSION=1.7.0-taxom.4 pio run -e esp12e
+VERSION=1.7.0-taxom.5 pio run -e esp12e
 python test/host/run_tests.py
 ```
 
@@ -123,11 +150,12 @@ set `ASAN_OPTIONS=detect_leaks=0`. Address/undefined-behavior checks remain on.
 
 ## First hardware test
 
-`taxom.3` passed the user's mixed-client logging test. `taxom.4` still
-requires testing of output-gated clock synchronization on the actual PSU/module.
+`taxom.4` passed output-gated clock synchronization and completed all 60
+transitions in the concurrent control test. `taxom.5` still requires a repeat
+of that real-hardware test to assess local web recovery.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
-   to upload `firmware_esp12e_1_7_0-taxom_4.bin` and reboot the dongle.
+   to upload `firmware_esp12e_1_7_0-taxom_5.bin` and reboot the dongle.
 2. Check the version on Home. For the user's existing wiring keep UniSoft
    TTL+EN, UART 115200 baud on both ends, and Modbus address 1.
 3. With the output off and no load, compare TestController and web readings
@@ -144,7 +172,7 @@ when the dongle reboots:
 | Field | Meaning |
 | --- | --- |
 | `read_retries` / `recovered_reads` | Retried TCP reads / successful read replies on retry |
-| `uart_timeouts` | UART attempts that expired, including recovered attempts |
+| `uart_timeouts` | Bridged TCP UART attempts that expired, including recovered attempts; local timeouts are in `uart.local_timeouts` |
 | `invalid_responses` | CRC-valid replies with wrong identity, length or write echo |
 | `uart_exceptions` | Exception replies actually returned by the PSU |
 | `gateway_failures` | Requests finalized with a gateway-generated exception |
@@ -198,8 +226,9 @@ bytes were lost before the UART interface could observe them.
 ## Output-gated clock synchronization in taxom.4
 
 UART guards remain 10 ms normally and 50 ms during recovery. The output-state
-check is one additional read per five seconds only while a clock update is
-pending; reading the diagnostics endpoint itself still issues no UART request.
+check runs once per five seconds only while a clock update is pending.
+From `taxom.5`, each check may use two UART read attempts if the first times
+out; diagnostics itself still issues no UART request.
 
 The `clock_sync` JSON object reports policy `output_off_only`, `pending`,
 check/defer/read-failure counters, write/success/failure counters and the last
@@ -218,6 +247,31 @@ For the hardware check, request NTP synchronization with the output ON and
 confirm `pending=true`, increasing `deferred_output_on`, and no automatic
 clock write. On the next confirmed OFF check, `writes` and `successes`
 should increase and pending should clear, unless another NTP update arrived.
+
+## Local web recovery diagnostics (taxom.5)
+
+`local_reads.retries` counts local FC3 calls granted a second attempt after a
+timeout, `recovered` counts those that succeeded, and `failures` counts calls
+that ultimately returned failure, including valid PSU exceptions. These are
+independent of the legacy TCP retry counters. `uart.local_timeouts` continues
+to count every expired local attempt, including writes and recovered reads.
+
+The `web` object counts failed status responses, toggle requests, failed
+initial output-state reads, failed write acknowledgements, writes reconciled
+by fresh readback, and writes whose outcome could not be confirmed. A
+reconciled write sends exactly one output write on UART. `timing.http_toggle`
+includes output reads, write waiting, optional reconciliation and the full
+status response; it is elapsed time, not CPU utilization.
+
+The sanitizer suite passes 39 checks. The new harness compiles the production
+status/toggle handlers with the real RidenModbus/RTU implementation. It tests
+single-block recovery, CRC corruption, two-attempt exhaustion, failure to
+read the initial output in either ON/OFF state, normal ON/OFF, applied writes
+with missing or CRC-bad acknowledgements, unapplied writes, unreadable
+outcomes, and telemetry failure after a completed write. It also runs 100
+cycles of real web toggles interleaved with two same-IP TC sockets and HA,
+injecting read and acknowledgement failures. Clock gating remains covered
+by the existing six clock-sync checks.
 
 For rollback, upload the original v1.7.0 ESP-12E binary through the same web
 page. The ESP UART bootloader and the user's original full flash backup
