@@ -341,6 +341,15 @@ class Shared:
             return sorted("%s/%s" % (source, field) for source in OBSERVERS for field in required
                           if self.seen.get((source, field)) != self.epoch)
 
+    def observe_diagnostics(self, token, enabled):
+        with self.lock:
+            # A periodic HTTP request may straddle our Configure POST. Like a
+            # register read across a command, its old epoch is not a mode fault.
+            if (self.state == "stable" and token[1] == "stable" and token[0] == self.epoch and
+                    self.enabled is not None and enabled != self.enabled):
+                self.fail("web", "Diagnostics mode changed outside the test",
+                          expected=self.enabled, observed=enabled)
+
 
 def reader_worker(args, number, stop, shared, report):
     name = "reader-%d" % number
@@ -416,10 +425,10 @@ def web_worker(args, stop, shared, report):
                     raise
                 next_page = started + args.page_interval
             if not stop.is_set() and time.monotonic() >= next_diag:
-                with shared.lock:
-                    expected = shared.enabled
+                token = shared.token()
                 count += 1
-                capture_diagnostics(args, report, "periodic_%04d" % count, expected)
+                data = capture_diagnostics(args, report, "periodic_%04d" % count)
+                shared.observe_diagnostics(token, data["diagnostics_enabled"])
                 next_diag = time.monotonic() + args.diagnostics_interval
             if shared.fatal.is_set():
                 break

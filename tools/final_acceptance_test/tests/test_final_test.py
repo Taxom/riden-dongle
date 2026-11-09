@@ -454,6 +454,22 @@ class Tests(unittest.TestCase):
         self.assertFalse(s["restoration"]["diagnostics"])
         self.assertTrue(state.enabled)
 
+    def test_periodic_diagnostics_crossing_mode_switch_is_not_a_false_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report=rd.Report(Path(temp))
+            shared=rd.Shared({8:2600,9:500,18:0},report,0)
+            shared.enabled=False
+            old_token=shared.token()
+            shared.suspend()
+            shared.enabled=True
+            shared.begin(shared.expected)
+            shared.stable()
+            shared.observe_diagnostics(old_token,False)
+            self.assertFalse(shared.fatal.is_set())
+            shared.observe_diagnostics(shared.token(),False)
+            self.assertTrue(shared.fatal.is_set())
+            report.close()
+
 
 if __name__=="__main__":
     unittest.main(verbosity=2)
