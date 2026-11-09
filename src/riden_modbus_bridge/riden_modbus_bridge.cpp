@@ -111,8 +111,9 @@ Modbus::ResultCode RidenModbusBridge::modbus_tcp_raw_callback(uint8_t *data, uin
         fail_request(Modbus::EX_PATH_UNAVAILABLE);
         return Modbus::EX_SUCCESS;
     }
-    if (len == 0) {
-        fail_request(Modbus::EX_ILLEGAL_VALUE);
+    const auto validation = validate_request(data, len);
+    if (validation != Modbus::EX_SUCCESS) {
+        fail_request(validation);
         return Modbus::EX_SUCCESS;
     }
 
@@ -221,10 +222,58 @@ void RidenModbusBridge::finish_request()
 
 void RidenModbusBridge::fail_request(Modbus::ResultCode error)
 {
-    ++diagnostics.gateway_failures;
+    if (error == Modbus::EX_ILLEGAL_VALUE || error == Modbus::EX_ILLEGAL_FUNCTION)
+        ++diagnostics.rejected_requests;
+    else
+        ++diagnostics.gateway_failures;
     const uint8_t response[] = {uint8_t(request_header[0] | 0x80), uint8_t(error)};
     modbus_tcp.send_response(client_slot, transaction_id, slave_id, response, sizeof(response));
     finish_request();
+}
+
+bool RidenModbusBridge::valid_live_value(uint16_t address, uint16_t value) const
+{
+    if (address == +Register::VoltageSet)
+        return double(value) <= riden_modbus.get_max_voltage() * riden_modbus.v_multi;
+    if (address == +Register::CurrentSet)
+        return double(value) <= riden_modbus.get_max_current() * riden_modbus.i_multi;
+    if (address == +Register::Output) return value <= 1;
+    return true;
+}
+
+Modbus::ResultCode RidenModbusBridge::validate_request(const uint8_t *data, uint8_t len) const
+{
+    if (!len) return Modbus::EX_ILLEGAL_VALUE;
+    auto read_word = [data](unsigned i) { return (uint16_t(data[i]) << 8) | data[i + 1]; };
+    if (data[0] >= Modbus::FC_READ_COILS && data[0] <= Modbus::FC_READ_INPUT_REGS) {
+        if (len != 5) return Modbus::EX_ILLEGAL_VALUE;
+        const uint16_t count = read_word(3);
+        const uint16_t maximum = data[0] <= Modbus::FC_READ_INPUT_STAT ? 2000 : 125;
+        if (!count || count > maximum || uint32_t(read_word(1)) + count > 65536UL)
+            return Modbus::EX_ILLEGAL_VALUE;
+    } else if (data[0] == Modbus::FC_WRITE_REG) {
+        if (len != 5 || !valid_live_value(read_word(1), read_word(3))) return Modbus::EX_ILLEGAL_VALUE;
+    } else if (data[0] == Modbus::FC_WRITE_REGS || data[0] == Modbus::FC_READWRITE_REGS) {
+        const bool combined = data[0] == Modbus::FC_READWRITE_REGS;
+        const unsigned header = combined ? 10 : 6;
+        if (len < header) return Modbus::EX_ILLEGAL_VALUE;
+        if (combined && (!read_word(3) || read_word(3) > 125 || uint32_t(read_word(1)) + read_word(3) > 65536UL))
+            return Modbus::EX_ILLEGAL_VALUE;
+        const uint16_t address = read_word(combined ? 5 : 1), count = read_word(combined ? 7 : 3);
+        if (!count || count > (combined ? 121 : 123) || data[header - 1] != count * 2 ||
+            unsigned(len) != header + count * 2 || uint32_t(address) + count > 65536UL)
+            return Modbus::EX_ILLEGAL_VALUE;
+        for (unsigned i = 0; i < count; ++i)
+            if (!valid_live_value(address + i, read_word(header + i * 2))) return Modbus::EX_ILLEGAL_VALUE;
+    } else if (data[0] == Modbus::FC_MASKWRITE_REG) {
+        if (len != 7) return Modbus::EX_ILLEGAL_VALUE;
+        const uint16_t address = read_word(1);
+        // A masked live-value write needs an atomic read/validate/write policy.
+        // Reject this unsupported form instead of bypassing the live limits.
+        if (address == +Register::VoltageSet || address == +Register::CurrentSet || address == +Register::Output)
+            return Modbus::EX_ILLEGAL_FUNCTION;
+    }
+    return Modbus::EX_SUCCESS;
 }
 
 bool RidenModbusBridge::valid_response(const uint8_t *data, uint8_t len) const

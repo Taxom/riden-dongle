@@ -31,4 +31,5 @@ The standalone Windows/Python concurrent Modbus + HTTP control tester is documen
 Later stages continue as separate commits and version branches:
 
 - [`versions/1.7.0-taxom.8`](https://github.com/Taxom/riden-dongle/tree/versions/1.7.0-taxom.8): persistent optional detailed diagnostics, default off; core V2 configuration stays compatible with earlier firmware. The original 1–7 snapshots and bundle above remain unchanged.
+- [`versions/1.7.0-taxom.9`](https://github.com/Taxom/riden-dongle/tree/versions/1.7.0-taxom.9): strict HTTP/live-register input validation and the standalone final OFF/ON diagnostics acceptance tester, including expected rejections of malformed or out-of-range requests.
 

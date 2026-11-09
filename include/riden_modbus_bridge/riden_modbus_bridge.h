@@ -63,6 +63,7 @@ class RidenModbusBridge
         uint32_t invalid_responses = 0;
         uint32_t uart_exceptions = 0;
         uint32_t gateway_failures = 0;
+        uint32_t rejected_requests = 0;
         uint16_t last_failed_register = 0;
         uint16_t last_failure_code = 0;
         uint8_t last_failed_function = 0;
@@ -80,6 +81,8 @@ class RidenModbusBridge
     void finish_request();
     void fail_request(Modbus::ResultCode error);
     bool valid_response(const uint8_t *data, uint8_t len) const;
+    Modbus::ResultCode validate_request(const uint8_t *data, uint8_t len) const;
+    bool valid_live_value(uint16_t address, uint16_t value) const;
 
     // State of any currently running modbus command
     bool request_pending = false;

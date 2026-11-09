@@ -56,7 +56,8 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         subprocess.run(cmd,check=True)
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
-        assert data['version']=='1.7.0-taxom.8' and data['requests']==10
+        assert data['version']=='1.7.0-taxom.9' and data['requests']==10
+        assert data['setpoint_validation']=='strict_v1' and data['rejected_requests']==0
         assert data['diagnostics_enabled'] is True
         assert data['detail_scope']=='enabled_periods_since_boot'
         assert data['read_retries']==data['recovered_reads']==10
@@ -81,11 +82,13 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
                            http_source.index('\nvoid RidenHttpServer::handle_set_i()')]
         toggle=http_source[http_source.index('void RidenHttpServer::handle_toggle_out()'):
                            http_source.index('\nvoid RidenHttpServer::send_redirect_root()')]
+        setters=http_source[http_source.index('void RidenHttpServer::handle_set_i()'):
+                            http_source.index('\nvoid RidenHttpServer::handle_toggle_out()')]
         protection=http_source[http_source.index('static String protection_to_string('):
                                http_source.index('\nstatic String outputmode_to_string(')]
         control_test=tmp/'http_control.cpp'
         control_test.write_text((root/'test/host/http_control.cpp').read_text().replace(
-            '// PRODUCTION_STATUS_AND_TOGGLE',protection+'\n'+status+'\n'+toggle))
+            '// PRODUCTION_STATUS_AND_TOGGLE',protection+'\n'+status+'\n'+setters+'\n'+toggle))
         cmd[cmd.index(str(http_test))]=str(control_test)
         cmd[-1]=str(tmp/'http_control')
         subprocess.run(cmd,check=True)

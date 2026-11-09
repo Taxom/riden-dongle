@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.8**.
+Candidate firmware version: **1.7.0-taxom.9**.
 
 ## Observed problem
 
@@ -158,7 +158,7 @@ with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```sh
 python -m pip install -r requirements.txt
-VERSION=1.7.0-taxom.8 pio run -e esp12e
+VERSION=1.7.0-taxom.9 pio run -e esp12e
 python test/host/run_tests.py
 ```
 
@@ -180,7 +180,7 @@ adds an optional, persistent detailed-diagnostics setting; hardware testing
 of the new switch is still pending.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
-   to upload `firmware_esp12e_1_7_0-taxom_8.bin` and reboot the dongle.
+   to upload `firmware_esp12e_1_7_0-taxom_9.bin` and reboot the dongle.
 2. Check the version on Home. For the user's existing wiring keep UniSoft
    TTL+EN, UART 115200 baud on both ends, and Modbus address 1.
 3. With the output off and no load, compare TestController and web readings
@@ -396,3 +396,49 @@ Versions 1 through 7 have separate `versions/1.7.0-taxom.N` branches.
 published commit and its original local commit. The accompanying Git bundle
 preserves the original objects, dates and version tags without squashing
 any development stage.
+
+## Strict setpoint validation and final acceptance (taxom.9)
+
+The user requested incorrect/out-of-range commands in the final control test.
+Previously, HTTP `strtod` ignored an invalid suffix and converted empty/text
+input to zero; non-finite or excessive values could reach an unchecked integer
+conversion. The new validation rejects these before sending a UART request.
+
+- HTTP `/set_v` and `/set_i` accept one complete finite decimal number in
+  the advertised PSU range. Empty/text input, units, decimal comma, embedded
+  NUL, NaN/infinity, overflow, negative and excessive values return HTTP 400.
+  Valid zero, bounds, decimal exponents and surrounding whitespace work.
+- Invalid/unsupported `/set_i_range` input returns HTTP 400. Local numeric
+  voltage/current helpers also reject non-finite, negative, excessive or
+  unrepresentable values before register conversion. A range-aware current
+  write fails if the required range read fails instead of using an unknown scale.
+- The TCP bridge validates read sizes and FC6/FC16/FC23 framing before UART.
+  Writes covering live registers 8/9/18 must respect V/I limits and boolean
+  output values. A multi-register request is checked in full before forwarding.
+  Masked writes to those live registers return exception 1 because no atomic
+  read/validate/masked-write policy is implemented; invalid values return 3.
+- Expected client rejections increment `rejected_requests`, separately from
+  terminal gateway failures. JSON advertises `setpoint_validation: "strict_v1"`
+  so the hardware test refuses older firmware before attempting negative writes.
+- Host Arduino stubs include the actual `word(...)` macro, guarding against
+  accidental helper-name macro substitution in the production parser.
+
+The standalone final tester is in
+[`tools/final_acceptance_test`](tools/final_acceptance_test/README_RU.txt).
+It preserves the saved diagnostics checkbox, timezone, UART speed and original
+V/I/output, then runs identical OFF/ON diagnostic phases with two persistent
+same-IP Modbus readers, a separate controller and HTTP load. It exercises live
+and OFF setpoint changes, FC6/FC16 and HTTP commands, per-client fresh readback,
+unloaded CV voltage tracking, 29 HTTP plus 13 Modbus rejection cases per mode,
+valid zero and protected-register invariants. Detailed metrics must freeze in
+OFF and resume in ON; successfully recovered UART retries remain allowed.
+
+Default profiles never exceed initial V/I and are additionally capped at
+5 V / 0.1 A. Use no attached load and disable other writers. Every write uses
+at most one command attempt; an ambiguous ACK is reconciled by reading and
+stops the test. Cleanup confirms OFF before restoring V/I, and restores ON only
+after the original setpoints and protected settings are verified. The initial
+diagnostics checkbox is restored too. An interruption or failed restoration
+cannot be a passing result. `eligible_for_merge` requires both complete phases,
+all expected rejections, no client errors and confirmed cleanup; the script
+does not access GitHub. Hardware execution and report review are pending.

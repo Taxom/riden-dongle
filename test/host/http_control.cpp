@@ -1,5 +1,6 @@
 #include <riden_modbus_bridge/riden_modbus_bridge.h>
 #include <riden_logging/web_diagnostics.h>
+#include <riden_http_server/setpoint_input.h>
 #include <cassert>
 #include <iostream>
 
@@ -20,6 +21,8 @@ class RidenHttpServer {
     struct Http {
         String body;
         int status=0;
+        String plain;
+        String arg(const char *) { return plain; }
         void send(int code, const char *, const String &text) { status=code;body=text; }
         void sendContent(const char *) {}
     } server;
@@ -27,6 +30,9 @@ class RidenHttpServer {
     void handle_status_get();
     bool send_status(const char *failure_message);
     void handle_toggle_out();
+    void handle_set_i();
+    void handle_set_v();
+    void handle_set_i_range();
 };
 }
 using namespace RidenDongle;
@@ -59,7 +65,7 @@ static void emulate(const std::vector<uint8_t> &request) {
         for(unsigned i=0;i<argument;++i) {pdu.push_back(regs[reg+i]>>8);pdu.push_back(regs[reg+i]);}
         if(corrupt_read && reg==failing_reg) {corrupt_read=false;bad_crc=true;}
     } else if(fn==6) {
-        assert(reg==18 && argument<=1);
+        assert((reg==18 && argument<=1) || reg==8 || reg==9);
         ++writes;
         if(apply_write) regs[18]=argument;
         pdu.assign(request.begin()+1,request.begin()+6);
@@ -87,6 +93,42 @@ int main(int argc,char **) {
     Serial.on_request=emulate;
     static RidenModbus bus;assert(bus.begin());
     RidenHttpServer http(bus);
+
+    const char *invalid[]={"", " ", "abc", "2.6V", "1,2", "NaN", "nan", "Infinity", "inf", "-1",
+                           "1e309", "1e-9999", "1000000", "0x10", ".", "1 2", "1e", "2.6junk"};
+    for(unsigned output=0;output<=1;++output) {
+        regs[18]=output;
+        for(const char *text:invalid) {
+            const auto before=Serial.requests.size();
+            http.server.plain=text;http.handle_set_v();assert(http.server.status==400);
+            http.handle_set_i();assert(http.server.status==400);
+            assert(Serial.requests.size()==before && regs[8]==2600 && regs[9]==500 && regs[18]==output);
+        }
+        for(const char *text:{"60.1001", "61", "65535"}) {
+            const auto before=Serial.requests.size();http.server.plain=text;http.handle_set_v();
+            assert(http.server.status==400 && Serial.requests.size()==before);
+        }
+        for(const char *text:{"6.0001", "6.1", "65535"}) {
+            const auto before=Serial.requests.size();http.server.plain=text;http.handle_set_i();
+            assert(http.server.status==400 && Serial.requests.size()==before);
+        }
+    }
+    http.server.plain=String("2.6\0junk",8);http.handle_set_v();assert(http.server.status==400);
+    std::cout<<"PASS: malformed/non-finite/negative/over-limit web setpoints never reach UART from ON or OFF\n";
+    for(const char *text:{"0", "60.1", " 2.6 ", "2.6e0"}) {
+        http.server.plain=text;http.handle_set_v();assert(http.server.status==200);
+    }
+    for(const char *text:{"0", "6", " 0.05 ", "5e-2"}) {
+        http.server.plain=text;http.handle_set_i();assert(http.server.status==200);
+    }
+    assert(regs[8]==2600 && regs[9]==500);
+    std::cout<<"PASS: valid web zero, bounds, fractions and decimal exponent still work\n";
+    for(const char *text:{"0", "1", "2", "-1", "abc", ""}) {
+        const auto before=Serial.requests.size();http.server.plain=text;http.handle_set_i_range();
+        assert(http.server.status==400 && Serial.requests.size()==before);
+    }
+    std::cout<<"PASS: unsupported or malformed current-range commands never reach UART\n";
+    regs[18]=0;
 
     reset_faults(http);failing_reg=20;read_failures=1;
     const auto retried=bus.get_diagnostics().local_read_retries;

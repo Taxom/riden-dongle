@@ -38,6 +38,9 @@ using std::max;
 #define SERIAL_8N1 0
 #define highByte(x) uint8_t((x) >> 8)
 #define lowByte(x) uint8_t(x)
+inline uint16_t makeWord(uint16_t value) { return value; }
+inline uint16_t makeWord(uint8_t high, uint8_t low) { return (uint16_t(high)<<8)|low; }
+#define word(...) makeWord(__VA_ARGS__)
 #define pgm_read_word(p) (*(p))
 #define bitSet(value, bit) ((value) |= (1UL << (bit)))
 #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))

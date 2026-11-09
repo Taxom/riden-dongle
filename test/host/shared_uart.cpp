@@ -234,6 +234,32 @@ int main(int argc,char **argv) {
     assert(writes==writes_before+1 && Serial.requests.size()==requests_before+1);
     std::cout<<"PASS: lost write acknowledgement does not repeat the applied write\n";
 
+    const std::vector<std::vector<uint8_t>> invalid_writes={
+        {6,0,8,0xff,0xff}, {6,0,8,0xea,0xc5}, {6,0,9,0xea,0x61},
+        {6,0,18,0,2}, {6,0,18,0xff,0xff}, {6,0,8,0},
+        {16,0,8,0,2,4,0xff,0xff,0x01,0xf4},
+        {16,0,8,0,2,4,0x0a,0x28,0xff,0xff},
+        {16,0,8,0,2,2,0x0a,0x28}, {16,0,8,0,0,0},
+        {23,0,8,0,2,0,8,0,2,4,0xff,0xff,0x01,0xf4},
+        {3,0,0,0,0}, {3,0,0,0,126}};
+    const auto before_rejected=Serial.requests.size();
+    const auto old_v=regs[8],old_i=regs[9],old_out=regs[18];
+    for(unsigned i=0;i<invalid_writes.size();++i) {
+        tcp.enqueue(100,800+i,invalid_writes[i]);bridge.loop();
+        check_packet(tc,800+i,{uint8_t(invalid_writes[i][0]|0x80),3});
+        assert(Serial.requests.size()==before_rejected);
+        assert(regs[8]==old_v && regs[9]==old_i && regs[18]==old_out);
+    }
+    tcp.enqueue(100,850,{22,0,8,0,0,0xff,0xff});bridge.loop();
+    check_packet(tc,850,{0x96,1});assert(Serial.requests.size()==before_rejected);
+    assert(bridge.get_diagnostics().rejected_requests>=invalid_writes.size()+1);
+    assert(!bus.set_voltage_set(-1) && !bus.set_voltage_set(61));
+    assert(!bus.set_current_set(-1) && !bus.set_current_set(6.1));
+    assert(!bus.set_voltage_set(NAN) && !bus.set_current_set(INFINITY));
+    assert(Serial.requests.size()==before_rejected);
+    std::cout<<"PASS: invalid FC6/FC16/FC23 values and malformed requests are rejected without UART writes\n";
+    std::cout<<"PASS: masked live-value writes cannot bypass limits; local setters reject non-finite/out-of-range values\n";
+
     // Many interleavings of TC, HA, and web reads must preserve routing.
     for(uint16_t i=0;i<200;i++) {
         if (i%17==0) drop_next=1;

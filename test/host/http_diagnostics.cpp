@@ -23,7 +23,7 @@ struct HostESP {
 struct HostWiFi { int RSSI() { return -55; } } WiFi;
 
 namespace RidenDongle {
-const char *version_string="1.7.0-taxom.8";
+const char *version_string="1.7.0-taxom.9";
 class RidenHttpServer {
   public:
     RidenModbus &modbus;
