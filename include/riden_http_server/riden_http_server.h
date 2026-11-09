@@ -5,6 +5,7 @@
 #pragma once
 
 #include <riden_modbus/riden_modbus.h>
+#include <riden_logging/clock_sync_state.h>
 #include <riden_modbus_bridge/riden_modbus_bridge.h>
 #include <riden_scpi/riden_scpi.h>
 #include <vxi11_server/vxi_server.h>

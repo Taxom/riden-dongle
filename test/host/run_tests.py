@@ -56,11 +56,24 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         subprocess.run(cmd,check=True)
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
-        assert data['version']=='1.7.0-taxom.3' and data['requests']==10
+        assert data['version']=='1.7.0-taxom.4' and data['requests']==10
         assert data['read_retries']==data['recovered_reads']==10
         assert data['uart']['tcp_timeouts']==data['uart']['timeouts_no_rx']==10
         assert len(data['uart']['recent_timeouts'])==8
         assert data['uart']['attempts']==data['uart']['attempt_wait']['count']==21
         assert data['timing']['http_diagnostics']['max_us']==120000
         assert data['system']['wifi_rssi_dbm']==-55
+        assert data['clock_sync']['policy']=='output_off_only'
+        assert data['clock_sync']['writes']==0 and data['clock_sync']['pending'] is False
+        assert data['clock_sync']['last_check_output_known'] is False
+        assert data['clock_sync']['last_check_output_on'] is True
         print('PASS: production diagnostics handler JSON, HTTP send timing, no UART polling')
+        main_source=(root/'src/main.cpp').read_text()
+        clock_handler=main_source[main_source.index('static void synchronize_clock_if_output_off()'):
+                                  main_source.index('\nvoid loop()')]
+        clock_test=tmp/'clock_sync.cpp'
+        clock_test.write_text((root/'test/host/clock_sync.cpp').read_text().replace('// PRODUCTION_CLOCK_SYNC',clock_handler))
+        subprocess.run(['g++','-std=gnu++17','-g','-O1','-fsanitize=address,undefined',
+                        '-fno-omit-frame-pointer','-I'+str(root/'test/host/include'),
+                        '-I'+str(root/'include'),str(clock_test),'-o',str(tmp/'clock_sync')],check=True)
+        subprocess.run([str(tmp/'clock_sync')],check=True)

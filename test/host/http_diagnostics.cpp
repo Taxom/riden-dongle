@@ -1,4 +1,5 @@
 #include <riden_modbus_bridge/riden_modbus_bridge.h>
+#include <riden_logging/clock_sync_state.h>
 #include <cassert>
 #include <cstdio>
 #include <iostream>
@@ -15,7 +16,7 @@ struct HostESP {
 struct HostWiFi { int RSSI() { return -55; } } WiFi;
 
 namespace RidenDongle {
-const char *version_string="1.7.0-taxom.3";
+const char *version_string="1.7.0-taxom.4";
 class RidenHttpServer {
   public:
     RidenModbus &modbus;

@@ -5,6 +5,7 @@
 #include <riden_config/riden_config.h>
 #include <riden_http_server/riden_http_server.h>
 #include <riden_logging/riden_logging.h>
+#include <riden_logging/clock_sync_state.h>
 #include <riden_modbus/riden_modbus.h>
 #include <riden_modbus_bridge/riden_modbus_bridge.h>
 #include <riden_scpi/riden_scpi.h>
@@ -33,10 +34,6 @@ using namespace RidenDongle;
 
 static Ticker led_ticker;
 static char hostname[100];
-
-static volatile bool clock_update_pending = false;
-static bool clock_update_failed = false;
-static unsigned long last_clock_update_attempt = 0;
 
 static bool connected = false;
 
@@ -178,28 +175,54 @@ static bool connect_wifi(const char *hostname)
     return wifi_connected;
 }
 
+static void synchronize_clock_if_output_off()
+{
+    auto &clock = clock_sync_state();
+    if (!clock.pending) return;
+    const uint32_t now_ms = millis();
+    if (clock.checked && uint32_t(now_ms - clock.last_check_ms) < 5000UL) return;
+    clock.checked = true;
+    clock.last_check_ms = now_ms;
+    ++clock.checks;
+
+    // Confirm the current output state over the same serialized UART.
+    // A failed read is unknown, never permission to write the clock.
+    bool output_on = true;
+    clock.output_known = riden_modbus.get_output_on(output_on);
+    if (!clock.output_known) {
+        ++clock.output_read_failures;
+        return;
+    }
+    clock.output_on = output_on;
+    if (output_on) {
+        ++clock.deferred_output_on;
+        return;
+    }
+
+    // No network command handler runs between this fresh OFF check and
+    // the write. A later physical key press cannot be made atomic with RTU.
+    // Clear before writing so a new NTP event during the write stays pending.
+    clock.pending = false;
+    time_t now;
+    tm local_time;
+    time(&now);
+    localtime_r(&now, &local_time);
+    LOG_LN("Setting PSU clock with output off");
+    ++clock.writes;
+    clock.last_write_ms = millis();
+    if (riden_modbus.set_clock(local_time)) {
+        ++clock.successes;
+    } else {
+        ++clock.write_failures;
+        clock.pending = true;
+    }
+}
+
 void loop()
 {
     ScopedTiming timing(main_loop_timing());
     if (connected) {
-        if (clock_update_pending &&
-            (!clock_update_failed || millis() - last_clock_update_attempt >= 5000UL)) {
-            // Clear before the write: a new NTP event during a yielding
-            // Modbus transaction must remain pending for the next loop.
-            clock_update_pending = false;
-            last_clock_update_attempt = millis();
-            LOG_LN("Setting PSU clock");
-            // Read time and convert to local timezone
-            time_t now;
-            tm tm;
-            time(&now);
-            localtime_r(&now, &tm);
-
-            clock_update_failed = !riden_modbus.set_clock(tm);
-            if (clock_update_failed) {
-                clock_update_pending = true;
-            }
-        }
+        synchronize_clock_if_output_off();
 
         MDNS.update();
         riden_modbus.loop();
@@ -228,5 +251,5 @@ void wifi_manager_config_mode_callback(WiFiManager *myWiFiManager)
 void on_time_received()
 {
     LOG_LN("Time has been received");
-    clock_update_pending = true;
+    clock_sync_state().pending = true;
 }

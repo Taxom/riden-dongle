@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.3**.
+Candidate firmware version: **1.7.0-taxom.4**.
 
 ## Observed problem
 
@@ -25,6 +25,13 @@ The precise UART loss mechanism and each logging gap remain unconfirmed.
 TestController also adapts its logging interval when it cannot maintain it,
 so the CSV interval is not a measurement of ESP CPU utilization.
 
+The user's `taxom.3` no-web run produced another 2,162 clean rows. The
+snapshot showed 407 recovered TCP reads, 409 total UART timeouts (408 with
+no RX bytes observed), two CRC-bad chunks, and no terminal gateway failures.
+CRC-valid frames were consumed in 6.93 ms on average, at most 16.95 ms.
+The remaining first-attempt failures are not yet explained. The user asked
+to defer automatic PSU clock writes until the output is confirmed OFF.
+
 ## Changes
 
 - Send TCP replies using a separate MBAP/PDU buffer. The previous use of
@@ -44,6 +51,12 @@ so the CSV interval is not a measurement of ESP CPU utilization.
   library has released its callback and destination buffer before returning.
 - Synchronize the PSU clock after each NTP update, with a five-second retry
   interval for failed clock writes. A new NTP event during a write stays pending.
+- From `taxom.4`, automatic clock writes require a fresh successful read
+  confirming Output OFF. ON or an unreadable output state leaves the update
+  pending. While pending, check no more often than every five seconds.
+  Capture current local time after the OFF check, so a long deferral does not
+  write an old NTP timestamp. Each write retry performs another output check.
+  NTP updates to the ESP's own clock continue normally.
 - Pin the platform and library versions used to build this candidate.
 - Wait at least 10 ms after UART completion before starting another local
   or TCP transaction. After failure, drain late input until 50 ms of quiet;
@@ -95,7 +108,7 @@ with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```sh
 python -m pip install -r requirements.txt
-VERSION=1.7.0-taxom.3 pio run -e esp12e
+VERSION=1.7.0-taxom.4 pio run -e esp12e
 python test/host/run_tests.py
 ```
 
@@ -110,11 +123,11 @@ set `ASAN_OPTIONS=detect_leaks=0`. Address/undefined-behavior checks remain on.
 
 ## First hardware test
 
-`taxom.2` passed the user's mixed-client logging test. `taxom.3` still
-requires testing on the actual PSU/module.
+`taxom.3` passed the user's mixed-client logging test. `taxom.4` still
+requires testing of output-gated clock synchronization on the actual PSU/module.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
-   to upload `firmware_esp12e_1_7_0-taxom_3.bin` and reboot the dongle.
+   to upload `firmware_esp12e_1_7_0-taxom_4.bin` and reboot the dongle.
 2. Check the version on Home. For the user's existing wiring keep UniSoft
    TTL+EN, UART 115200 baud on both ends, and Modbus address 1.
 3. With the output off and no load, compare TestController and web readings
@@ -181,6 +194,30 @@ software observations, not hardware UART interrupt timestamps. CRC counters
 describe chunks parsed by the library, not independently reconstructed wire
 frames. No-RX timeouts do not prove whether the PSU failed to transmit or
 bytes were lost before the UART interface could observe them.
+
+## Output-gated clock synchronization in taxom.4
+
+UART guards remain 10 ms normally and 50 ms during recovery. The output-state
+check is one additional read per five seconds only while a clock update is
+pending; reading the diagnostics endpoint itself still issues no UART request.
+
+The `clock_sync` JSON object reports policy `output_off_only`, `pending`,
+check/defer/read-failure counters, write/success/failure counters and the last
+check/write uptime. `last_check_output_known` and `last_check_output_on`
+describe the last synchronization eligibility check, not a live output poll.
+The output is never toggled by synchronization. No network command handler
+runs between the OFF check and clock write; a physical front-panel action
+cannot be made atomic with two separate RTU transactions.
+
+Host tests compile the actual clock-sync helper from `main.cpp` and cover
+ON-to-OFF deferral, failed output reads, write retries that must recheck the
+output, a new NTP event during a write, capturing current time after deferral,
+and the five-second gate across the 32-bit millisecond clock wrapping.
+
+For the hardware check, request NTP synchronization with the output ON and
+confirm `pending=true`, increasing `deferred_output_on`, and no automatic
+clock write. On the next confirmed OFF check, `writes` and `successes`
+should increase and pending should clear, unless another NTP update arrived.
 
 For rollback, upload the original v1.7.0 ESP-12E binary through the same web
 page. The ESP UART bootloader and the user's original full flash backup
