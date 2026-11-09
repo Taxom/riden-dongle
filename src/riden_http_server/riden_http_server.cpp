@@ -293,12 +293,17 @@ void RidenHttpServer::handle_config_get()
         }
     }
     server.sendContent_P(HTML_CONFIG_BODY_3);
+    if (riden_config.get_diagnostics_enabled()) server.sendContent(" checked");
+    server.sendContent_P(HTML_CONFIG_BODY_4);
     server.sendContent_P(HTML_FOOTER);
     server.sendContent("");
 }
 
 void RidenHttpServer::handle_config_post()
 {
+    const String old_timezone = riden_config.get_timezone_name();
+    const uint32_t old_baudrate = riden_config.get_uart_baudrate();
+    const bool old_diagnostics = riden_config.get_diagnostics_enabled();
     String tz = server.arg("timezone");
     String uart_baudrate_string = server.arg("uart_baudrate");
     uint32_t uart_baudrate = std::strtoull(uart_baudrate_string.c_str(), nullptr, 10);
@@ -306,7 +311,14 @@ void RidenHttpServer::handle_config_post()
     LOG_F("Selected baudrate: %u\r\n", uart_baudrate);
     riden_config.set_timezone_name(tz);
     riden_config.set_uart_baudrate(uart_baudrate);
-    riden_config.commit();
+    riden_config.set_diagnostics_enabled(server.arg("diagnostics_enabled") == "1");
+    if (!riden_config.commit()) {
+        riden_config.set_timezone_name(old_timezone);
+        riden_config.set_uart_baudrate(old_baudrate);
+        riden_config.set_diagnostics_enabled(old_diagnostics);
+        server.send(500, "text/plain", "Failed to save configuration; settings not applied");
+        return;
+    }
 
     send_redirect_self();
 }
@@ -764,6 +776,9 @@ void RidenHttpServer::handle_modbus_diagnostics()
     String json;
     json.reserve(4096);
     json += counters;
+    json += ",\"diagnostics_enabled\":";
+    json += detailed_diagnostics_enabled() ? "true" : "false";
+    json += ",\"detail_scope\":\"enabled_periods_since_boot\"";
 
     const auto &monitor = modbus.get_uart_monitor();
     const auto &rx = monitor.get_diagnostics();

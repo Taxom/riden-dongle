@@ -81,7 +81,8 @@ static void reset_faults(RidenHttpServer &http) {
     web_diagnostics()={};http.server.status=0;http.server.body.clear();
 }
 
-int main() {
+int main(int argc,char **) {
+    set_detailed_diagnostics_enabled(argc>1);
     regs[0]=60065;regs[8]=2600;regs[9]=500;regs[10]=2599;regs[14]=6576;
     Serial.on_request=emulate;
     static RidenModbus bus;assert(bus.begin());
@@ -176,4 +177,7 @@ int main() {
         assert(ha.packets.back().back()==0xf4);
     }
     std::cout<<"PASS: 100 cycles of real web toggles plus two same-IP TCs and HA, with read/ACK faults\n";
+    assert((web_diagnostics().toggle_time.count>0)==detailed_diagnostics_enabled());
+    std::cout<<"PASS: output control and recovery work with optional tracing "
+             <<(detailed_diagnostics_enabled() ? "on" : "off")<<"\n";
 }

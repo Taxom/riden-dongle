@@ -77,6 +77,9 @@ static void check_packet(const HostTCPClient &client, uint16_t id, const std::ve
 }
 
 int main(int argc,char **argv) {
+#ifndef RIDEN_REPRODUCE_UPSTREAM
+    RidenDongle::set_detailed_diagnostics_enabled(true);
+#endif
     const bool reproduce = argc>1 && String(argv[1])=="--reproduce";
     regs[0]=60065;regs[2]=3111;regs[3]=143;regs[5]=32;
     regs[8]=2600;regs[9]=500;regs[10]=2599;regs[14]=6569;
@@ -266,5 +269,31 @@ int main(int argc,char **argv) {
     host_time_us=saved_time;
     std::cout<<"PASS: passive UART timing, CRC/no-RX classification, event history and timer wrap\n";
     std::cout<<"PASS: 200 cycles of two same-IP TCs + HA + web with dropped replies\n";
+
+    // Switching tracing off must not affect UART recovery or routing.
+    const auto saved_attempts=observed.get_diagnostics().attempts;
+    const auto saved_rx_bytes=observed.get_diagnostics().rx_bytes;
+    const auto saved_crc_errors=observed.get_diagnostics().crc_errors;
+    const auto saved_timings=bridge.get_diagnostics().request_time.count;
+    RidenDongle::set_detailed_diagnostics_enabled(false);
+    regs[8]=2600;
+    for(unsigned cycle=0;cycle<20;++cycle) {
+        drop_next=1;
+        tcp.enqueueClient(tc,600+cycle,{3,0,8,0,1});bridge.loop();
+        check_packet(tc,600+cycle,{3,2,0x0a,0x28});
+        uint16_t local=0;assert(bus.read_holding_registers(10,&local) && local==2599);
+    }
+    assert(observed.get_diagnostics().attempts==saved_attempts);
+    assert(observed.get_diagnostics().rx_bytes==saved_rx_bytes);
+    assert(observed.get_diagnostics().crc_errors==saved_crc_errors);
+    assert(bridge.get_diagnostics().request_time.count==saved_timings);
+    std::cout<<"PASS: tracing off freezes detailed statistics while TCP retries and local reads work\n";
+    RidenDongle::set_detailed_diagnostics_enabled(true);
+    tcp.enqueueClient(tc,700,{3,0,8,0,1});bridge.loop();
+    check_packet(tc,700,{3,2,0x0a,0x28});
+    assert(observed.get_diagnostics().attempts==saved_attempts+1);
+    assert(observed.get_diagnostics().rx_bytes>saved_rx_bytes);
+    assert(bridge.get_diagnostics().request_time.count==saved_timings+1);
+    std::cout<<"PASS: tracing resumes cleanly after enabling without a reboot\n";
 #endif
 }

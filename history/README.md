@@ -28,3 +28,7 @@ To inspect a particular original snapshot, use `git show v1.7.0-taxom.4:FORK_NOT
 
 The standalone Windows/Python concurrent Modbus + HTTP control tester is documented in [`tools/multi_client_test/README_RU.txt`](../tools/multi_client_test/README_RU.txt).
 
+Later stages continue as separate commits and version branches:
+
+- [`versions/1.7.0-taxom.8`](https://github.com/Taxom/riden-dongle/tree/versions/1.7.0-taxom.8): persistent optional detailed diagnostics, default off; core V2 configuration stays compatible with earlier firmware. The original 1–7 snapshots and bundle above remain unchanged.
+

@@ -31,6 +31,8 @@ class RidenConfig
     bool get_and_reset_config_portal_on_boot();
     uint32_t get_uart_baudrate();
     void set_uart_baudrate(uint32_t baudrate);
+    bool get_diagnostics_enabled() const;
+    void set_diagnostics_enabled(bool enabled);
 
   private:
     String tz_name = "";

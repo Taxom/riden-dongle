@@ -199,6 +199,16 @@ static const char HTML_CONFIG_BODY_2[] PROGMEM =
 static const char HTML_CONFIG_BODY_3[] PROGMEM =
     "                    </select></td>"
     "                </tr>"
+    "                <tr>"
+    "                    <th>Diagnostics</th>"
+    "                    <td><label><input type='checkbox' id='diagnostics_enabled' name='diagnostics_enabled' value='1'";
+
+static const char HTML_CONFIG_BODY_4[] PROGMEM =
+    "> Enable detailed diagnostics</label>"
+    "                        <p>Collect detailed communication statistics. Leave off for normal use."
+    "                        Takes effect after Save without rebooting. Basic error counters remain active.</p>"
+    "                    </td>"
+    "                </tr>"
     "                <tr><th></th><td><input type='submit' value='Save'></td></tr>"
     "            </tbody>"
     "        </table>"

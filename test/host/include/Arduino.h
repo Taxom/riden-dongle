@@ -16,8 +16,13 @@ class String : public std::string {
     using std::string::string;
     using std::string::operator=;
     String(const std::string &value) : std::string(value) {}
+    int compareTo(const String &value) const { return compare(value); }
     template <class T, typename std::enable_if<std::is_arithmetic<T>::value, int>::type = 0>
     String(T value) : std::string(std::to_string(value)) {}
+    template <class T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+    String(T value, unsigned base) : std::string(std::to_string(value)) {
+        if (base != 10) std::abort();
+    }
     String(double value, unsigned digits) {
         char text[96];
         std::snprintf(text, sizeof(text), "%.*f", int(digits), value);

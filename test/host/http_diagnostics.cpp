@@ -23,7 +23,7 @@ struct HostESP {
 struct HostWiFi { int RSSI() { return -55; } } WiFi;
 
 namespace RidenDongle {
-const char *version_string="1.7.0-taxom.7";
+const char *version_string="1.7.0-taxom.8";
 class RidenHttpServer {
   public:
     RidenModbus &modbus;
@@ -58,6 +58,8 @@ static void reply(const std::vector<uint8_t> &) {
 }
 
 int main() {
+    assert(!detailed_diagnostics_enabled());
+    set_detailed_diagnostics_enabled(true);
     Serial.on_request=reply;
     static RidenModbus bus;assert(bus.begin());
     RidenModbusBridge bridge(bus);assert(bridge.begin());
@@ -73,4 +75,10 @@ int main() {
     http.handle_modbus_diagnostics();
     assert(Serial.requests.size()==requests);
     std::cout<<http.server.body<<"\n";
+    set_detailed_diagnostics_enabled(false);
+    const auto count=http.diagnostics_time.count;
+    http.handle_modbus_diagnostics();
+    assert(http.server.status==200 && Serial.requests.size()==requests);
+    assert(http.server.body.find("\"diagnostics_enabled\":false")!=String::npos);
+    assert(http.diagnostics_time.count==count);
 }

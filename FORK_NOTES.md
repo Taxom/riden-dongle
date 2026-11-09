@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.7**.
+Candidate firmware version: **1.7.0-taxom.8**.
 
 ## Observed problem
 
@@ -158,7 +158,7 @@ with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```sh
 python -m pip install -r requirements.txt
-VERSION=1.7.0-taxom.7 pio run -e esp12e
+VERSION=1.7.0-taxom.8 pio run -e esp12e
 python test/host/run_tests.py
 ```
 
@@ -175,10 +175,12 @@ set `ASAN_OPTIONS=detect_leaks=0`. Address/undefined-behavior checks remain on.
 
 `taxom.5` passed the full concurrent control/web test, and the user confirmed
 a successful `.6` to `.6` self-update/reboot on the physical module.
-`taxom.7` adds the diagnostics navigation link to those changes.
+`taxom.7` adds the diagnostics navigation link to those changes. `taxom.8`
+adds an optional, persistent detailed-diagnostics setting; hardware testing
+of the new switch is still pending.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
-   to upload `firmware_esp12e_1_7_0-taxom_7.bin` and reboot the dongle.
+   to upload `firmware_esp12e_1_7_0-taxom_8.bin` and reboot the dongle.
 2. Check the version on Home. For the user's existing wiring keep UniSoft
    TTL+EN, UART 115200 baud on both ends, and Modbus address 1.
 3. With the output off and no load, compare TestController and web readings
@@ -342,6 +344,42 @@ visible on Home, Control, Configure and the other pages using that header.
 It opens the existing JSON snapshot in a new tab using `rel="noopener"`.
 No automatic refresh is added; the endpoint still issues no UART requests.
 Both the source mockup and its generated C header are updated together.
+
+## Optional detailed diagnostics (taxom.8)
+
+Configure has an **Enable detailed diagnostics** checkbox. It starts off for
+new devices and upgrades from taxom.1-7. Save applies the setting immediately
+and persists it across restarts. Timezone and UART baudrate remain in the
+original V2 EEPROM format; the new setting uses a validated extension at
+offset 128, so earlier firmware can still read and save the core settings.
+A failed EEPROM commit reports an HTTP error and restores the active settings.
+
+When off, the passive UART adapter forwards data without per-byte capture,
+diagnostic CRC computation, latency histograms or timeout-event collection.
+Scoped timing skips both clock reads and statistics updates. ModbusRTU still
+validates the actual transport CRC, and all pacing, retries, response validation,
+output control and OFF-only clock synchronization continue unchanged. Basic
+request/error/recovery counters stay active; they are also used by the bridge
+to distinguish a recovered read from a valid PSU exception.
+
+The JSON endpoint remains available and includes `diagnostics_enabled` and
+`detail_scope: "enabled_periods_since_boot"`. Detailed UART/timing fields freeze
+when disabled and resume on enabling, accumulating only enabled periods until
+the next reboot. Basic counters cover the entire uptime. Buffers remain
+statically allocated; the switch reduces work, not the reserved RAM footprint.
+No statistics are written to flash. Only saving configuration writes EEPROM.
+
+The diagnostics tab has no automatic refresh: leaving it open creates no
+periodic requests. Opening/refreshing it constructs and sends one JSON snapshot
+and reads system status, without polling the PSU UART. Existing background
+diagnostics in taxom.7 performed extra CPU work even with the tab closed;
+its CPU percentage has not been measured, and elapsed HTTP/loop timing must
+not be interpreted as CPU utilization.
+
+For a detailed PC-test report, enable the checkbox before starting the script.
+Normal operation can leave it off. Regression checks exercise output commands,
+read/ACK recovery and multi-client routing with tracing off and on, as well as
+EEPROM migration, checkbox rendering, persistence and save failure.
 
 For rollback, upload the original v1.7.0 ESP-12E binary through the same web
 page. The ESP UART bootloader and the user's original full flash backup

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <riden_logging/diagnostics_state.h>
 
 namespace RidenDongle {
 
@@ -25,10 +26,15 @@ struct TimingStats {
 
 class ScopedTiming {
     TimingStats &stats;
+    const bool enabled;
     const uint32_t started;
   public:
-    explicit ScopedTiming(TimingStats &stats) : stats(stats), started(micros()) {}
-    ~ScopedTiming() { stats.add(uint32_t(micros() - started)); }
+    explicit ScopedTiming(TimingStats &stats) : stats(stats),
+        enabled(detailed_diagnostics_enabled()), started(enabled ? micros() : 0) {}
+    ~ScopedTiming() {
+        if (enabled && detailed_diagnostics_enabled())
+            stats.add(uint32_t(micros() - started));
+    }
     ScopedTiming(const ScopedTiming &) = delete;
     ScopedTiming &operator=(const ScopedTiming &) = delete;
 };

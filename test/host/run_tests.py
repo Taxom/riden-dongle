@@ -56,7 +56,9 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         subprocess.run(cmd,check=True)
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
-        assert data['version']=='1.7.0-taxom.7' and data['requests']==10
+        assert data['version']=='1.7.0-taxom.8' and data['requests']==10
+        assert data['diagnostics_enabled'] is True
+        assert data['detail_scope']=='enabled_periods_since_boot'
         assert data['read_retries']==data['recovered_reads']==10
         assert data['uart']['tcp_timeouts']==data['uart']['timeouts_no_rx']==10
         assert len(data['uart']['recent_timeouts'])==8
@@ -88,6 +90,18 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         cmd[-1]=str(tmp/'http_control')
         subprocess.run(cmd,check=True)
         subprocess.run([str(tmp/'http_control')],check=True)
+        subprocess.run([str(tmp/'http_control'),'--diagnostics-on'],check=True)
+        config_handler=http_source[http_source.index('void RidenHttpServer::handle_config_get()'):
+                                   http_source.index('\nvoid RidenHttpServer::handle_firmware_update_post()')]
+        config_test=tmp/'config_diagnostics.cpp'
+        config_test.write_text((root/'test/host/config_diagnostics.cpp').read_text().replace(
+            '// PRODUCTION_CONFIG_HANDLERS',config_handler))
+        subprocess.run(['g++','-std=gnu++17','-g','-O1','-fsanitize=address,undefined',
+                        '-fno-omit-frame-pointer','-DDEFAULT_UART_BAUDRATE=9600','-DBUILD_VERSION=HOST_TEST',
+                        '-I'+str(root/'include'),'-I'+str(root/'test/host/include'),
+                        '-I'+str(root/'src/riden_http_server'),str(config_test),
+                        str(root/'src/riden_config/riden_config.cpp'),'-o',str(tmp/'config_diagnostics')],check=True)
+        subprocess.run([str(tmp/'config_diagnostics')],check=True)
         update=http_source[http_source.index('void RidenHttpServer::handle_firmware_update_post()'):
                            http_source.index('\nvoid RidenHttpServer::handle_disconnect_client_post()')]
         reboot=http_source[http_source.index('void RidenHttpServer::handle_reboot_dongle_get()'):

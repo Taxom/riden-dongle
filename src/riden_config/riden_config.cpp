@@ -5,6 +5,7 @@
 #include "timezones.h"
 #include <riden_config/riden_config.h>
 #include <riden_logging/riden_logging.h>
+#include <riden_logging/diagnostics_state.h>
 
 #include <EEPROM.h>
 
@@ -34,6 +35,19 @@ struct RidenConfigStructV2 {
     uint32_t uart_baudrate;
 };
 
+// Keep the V2 core format readable by older firmware (including taxom.1-7).
+// A separate, validated extension uses previously unused EEPROM bytes.
+static constexpr int DIAGNOSTICS_CONFIG_OFFSET = 128;
+static constexpr char DIAGNOSTICS_MAGIC[] = "DG1";
+struct DiagnosticsConfig {
+    char magic[sizeof(DIAGNOSTICS_MAGIC)];
+    uint8_t enabled;
+};
+static_assert(sizeof(RidenConfigStructV2) <= DIAGNOSTICS_CONFIG_OFFSET,
+              "Diagnostics extension overlaps core configuration");
+static_assert(DIAGNOSTICS_CONFIG_OFFSET + sizeof(DiagnosticsConfig) <= 512,
+              "Diagnostics extension exceeds EEPROM allocation");
+
 #define STRINGIZER(arg) #arg
 #define STR_VALUE(arg) STRINGIZER(arg)
 
@@ -46,6 +60,7 @@ const char *RidenDongle::build_time = nullptr;
 
 bool RidenConfig::begin()
 {
+    set_diagnostics_enabled(false);
 #ifdef MOCK_RIDEN
     return true;
 #else
@@ -75,6 +90,13 @@ bool RidenConfig::begin()
         default:
             success = false;
         }
+    }
+    if (success) {
+        DiagnosticsConfig diagnostics;
+        EEPROM.get(DIAGNOSTICS_CONFIG_OFFSET, diagnostics);
+        if (memcmp(diagnostics.magic, DIAGNOSTICS_MAGIC, sizeof(DIAGNOSTICS_MAGIC)) == 0 &&
+            diagnostics.enabled <= 1)
+            set_diagnostics_enabled(diagnostics.enabled == 1);
     }
     if (!success) {
         LOG_LN("RidenConfig: Incorrect magic");
@@ -148,12 +170,22 @@ void RidenConfig::set_uart_baudrate(uint32_t baudrate)
     this->uart_baudrate = baudrate;
 }
 
+bool RidenConfig::get_diagnostics_enabled() const
+{
+    return detailed_diagnostics_enabled();
+}
+
+void RidenConfig::set_diagnostics_enabled(bool enabled)
+{
+    set_detailed_diagnostics_enabled(enabled);
+}
+
 bool RidenConfig::commit()
 {
 #ifdef MOCK_RIDEN
     return true;
 #else
-    RidenConfigStructV2 config;
+    RidenConfigStructV2 config{};
     memcpy(config.header.magic, MAGIC, sizeof(MAGIC));
     config.header.config_version = CURRENT_CONFIG_VERSION;
     strcpy(config.tz_name, tz_name.c_str());
@@ -164,6 +196,10 @@ bool RidenConfig::commit()
     LOG_F("\tPortal on boot: %s\r\n", (config.config_portal_on_boot) ? "Yes" : "No");
     LOG_F("\tUART baudrate: %u\r\n", config.uart_baudrate);
     EEPROM.put(0, config);
+    DiagnosticsConfig diagnostics{};
+    memcpy(diagnostics.magic, DIAGNOSTICS_MAGIC, sizeof(DIAGNOSTICS_MAGIC));
+    diagnostics.enabled = get_diagnostics_enabled() ? 1 : 0;
+    EEPROM.put(DIAGNOSTICS_CONFIG_OFFSET, diagnostics);
     bool success = EEPROM.commit();
     if (success) {
         LOG_LN("RidenConfig: Saved configuration");

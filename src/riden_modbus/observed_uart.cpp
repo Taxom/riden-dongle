@@ -7,7 +7,7 @@ using namespace RidenDongle;
 int ObservedUart::available()
 {
     const int count = port->available();
-    if (active && count > 0 && !rx_seen) {
+    if (detailed_diagnostics_enabled() && active && count > 0 && !rx_seen) {
         rx_seen = true;
         diagnostics.first_byte.add(uint32_t(micros() - started_us));
     }
@@ -17,7 +17,7 @@ int ObservedUart::available()
 int ObservedUart::read()
 {
     const int byte = port->read();
-    if (byte >= 0 && active) {
+    if (detailed_diagnostics_enabled() && byte >= 0 && active) {
         ++diagnostics.rx_bytes;
         ++attempt_rx_bytes;
         last_read_us = micros();
@@ -37,20 +37,25 @@ void ObservedUart::observe_tx(const uint8_t *data, size_t size)
 size_t ObservedUart::write(uint8_t byte)
 {
     const size_t written = port->write(byte);
-    if (written) observe_tx(&byte, 1);
+    if (detailed_diagnostics_enabled() && written) observe_tx(&byte, 1);
     return written;
 }
 
 size_t ObservedUart::write(const uint8_t *data, size_t size)
 {
     const size_t written = port->write(data, size);
-    observe_tx(data, written);
+    if (detailed_diagnostics_enabled()) observe_tx(data, written);
     return written;
 }
 
 void ObservedUart::flush()
 {
     port->flush();
+    if (!detailed_diagnostics_enabled()) {
+        active = false;
+        tx_size = capture_size = 0;
+        return;
+    }
     if (!tx_size) return;
     // Start after the real UART flush: outgoing wire time is excluded.
     started_us = micros();
@@ -70,7 +75,7 @@ void ObservedUart::flush()
 
 void ObservedUart::end_frame()
 {
-    if (!capture_size) return;
+    if (!detailed_diagnostics_enabled() || !capture_size) return;
     ++diagnostics.rx_frames;
     if (capture_size > sizeof(capture)) {
         ++diagnostics.capture_overflows;
@@ -103,6 +108,10 @@ void ObservedUart::end_frame()
 
 void ObservedUart::finish_attempt()
 {
+    if (!detailed_diagnostics_enabled()) {
+        active = false;
+        return;
+    }
     if (!active) return;
     const uint32_t duration = uint32_t(micros() - started_us);
     diagnostics.attempt_wait.add(duration);
