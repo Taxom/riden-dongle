@@ -10,6 +10,12 @@ HostSerial Serial;
 static bool drop=false;
 
 struct HostESP {
+    struct ResetInfo { uint32_t reason=4; } reset;
+    const ResetInfo *getResetInfoPtr() { return &reset; }
+    uint32_t getFlashChipRealSize() { return 4*1024*1024; }
+    uint32_t getFlashChipSize() { return 4*1024*1024; }
+    uint32_t getSketchSize() { return 530000; }
+    uint32_t getFreeSketchSpace() { return 2000000; }
     uint32_t getFreeHeap() { return 25000; }
     uint32_t getMaxFreeBlockSize() { return 18000; }
     uint32_t getCpuFreqMHz() { return 80; }
@@ -17,7 +23,7 @@ struct HostESP {
 struct HostWiFi { int RSSI() { return -55; } } WiFi;
 
 namespace RidenDongle {
-const char *version_string="1.7.0-taxom.5";
+const char *version_string="1.7.0-taxom.6";
 class RidenHttpServer {
   public:
     RidenModbus &modbus;

@@ -149,9 +149,9 @@ static bool connect_wifi(const char *hostname)
         experimental::ESP8266WiFiGratuitous::stationKeepAliveSetIntervalMs();
         if (hostname != nullptr) {
             if (!MDNS.begin(hostname)) {
-                while (true) {
-                    delay(100);
-                }
+                // Service discovery is optional. Keep HTTP/Modbus by IP
+                // available instead of hanging startup after a warm reset.
+                LOG_LN("mDNS unavailable; continuing with IP access");
             }
             String tz = riden_config.get_timezone_spec();
             if (tz.length() > 0) {
@@ -221,6 +221,9 @@ static void synchronize_clock_if_output_off()
 void loop()
 {
     ScopedTiming timing(main_loop_timing());
+    // Finish a requested restart before any UART polling, clock writes or
+    // network command handling. The HTTP response callback has returned.
+    if (http_server.handle_pending_restart()) return;
     if (connected) {
         synchronize_clock_if_output_off();
 
@@ -232,6 +235,7 @@ void loop()
         vxi_server.loop();
     }
     http_server.loop();
+    if (http_server.restart_pending()) return;
     ArduinoOTA.handle();
 }
 

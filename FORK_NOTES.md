@@ -1,7 +1,7 @@
 # Taxom: shared UART polling and clock synchronization
 
 Based on upstream v1.7.0, commit `e9a060958c9dcf82f24353e36c2282b057690be4`.
-Candidate firmware version: **1.7.0-taxom.5**.
+Candidate firmware version: **1.7.0-taxom.6**.
 
 ## Observed problem
 
@@ -45,6 +45,22 @@ read confirmed ON. The run added 68 CRC-bad parser chunks, 26 short chunks,
 and 206 UART timeouts (159 with no observed RX bytes). No clock check/write
 ran during this test. `taxom.5` adds local read recovery and reconciles this
 ambiguous web-write outcome; it does not establish the physical UART cause.
+
+The same 10-minute PC test on `taxom.5` (`20261109_100828_5392.zip`) passed
+with 60 confirmed transitions, 11,390 successful TCP operations, 573
+successful web status polls and no PC-visible errors. All 163 TCP retries
+and 31 local read retries during the run recovered; all three sockets stayed
+connected and every state was observed by both readers and web. The PSU
+output returned to its initial OFF state. UART timeouts/CRC-bad chunks still
+occurred internally. Separately, the user reported needing to power-cycle
+the PSU after web firmware updates since installing `taxom.4`. The update
+restart handler was unchanged between `.3` and `.5`; the precise on-device
+failure stage (reset, boot, WiFi/mDNS, UART initialization or browser reload)
+has not been established by the screenshot or current logs.
+The binary crossed 512 KiB at `.4` (523,872 bytes for `.3`, 524,624 for `.4`,
+525,712 for `.5`), while the first eight boot-header bytes remained identical
+(`e902024080f41040`). This is an observation, not proof of an image-size cause;
+the new flash/layout diagnostics can help assess that hypothesis.
 
 ## Changes
 
@@ -135,7 +151,7 @@ with AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```sh
 python -m pip install -r requirements.txt
-VERSION=1.7.0-taxom.5 pio run -e esp12e
+VERSION=1.7.0-taxom.6 pio run -e esp12e
 python test/host/run_tests.py
 ```
 
@@ -150,12 +166,12 @@ set `ASAN_OPTIONS=detect_leaks=0`. Address/undefined-behavior checks remain on.
 
 ## First hardware test
 
-`taxom.4` passed output-gated clock synchronization and completed all 60
-transitions in the concurrent control test. `taxom.5` still requires a repeat
-of that real-hardware test to assess local web recovery.
+`taxom.5` passed the full concurrent control/web test. `taxom.6` retains those
+changes and hardens HTTP update/restart and optional mDNS startup; its actual
+OTA reset/boot still requires a test on the physical module.
 
 1. Stop network clients. Use the dongle's Configure / Firmware Update page
-   to upload `firmware_esp12e_1_7_0-taxom_5.bin` and reboot the dongle.
+   to upload `firmware_esp12e_1_7_0-taxom_6.bin` and reboot the dongle.
 2. Check the version on Home. For the user's existing wiring keep UniSoft
    TTL+EN, UART 115200 baud on both ends, and Modbus address 1.
 3. With the output off and no load, compare TestController and web readings
@@ -272,6 +288,45 @@ outcomes, and telemetry failure after a completed write. It also runs 100
 cycles of real web toggles interleaved with two same-IP TC sockets and HA,
 injecting read and acknowledgement failures. Clock gating remains covered
 by the existing six clock-sync checks.
+
+## HTTP firmware update and restart (taxom.6)
+
+This is defensive hardening, not a confirmed diagnosis of the user's physical
+restart problem. Track upload start, completion, byte counts, short writes,
+aborts, and the boolean result of `Update.end(true)`. A POST without a completed
+successful update returns HTTP 500 and cannot advertise success or schedule a
+restart, even if the updater's numeric error remains zero.
+
+A successful response has an explicit Content-Length and Connection: close.
+The callback schedules a restart instead of resetting within the upload
+handler. The main loop gives the response 500 ms, skips all UART polling,
+clock writes and further command handling while restart is pending, then
+stops the HTTP client with a 200 ms bound (aborting it if necessary), stops
+UDP and calls the supported `ESP.restart()`. It does not force a raw/hard
+reset or alter bootloader commands. Manual/config-portal restarts use the
+same deferred path. UDP services are no longer stopped at upload start, so
+a rejected or aborted upload does not gratuitously disable mDNS/NTP/ArduinoOTA.
+
+Optional mDNS initialization no longer traps startup in an infinite loop:
+HTTP and Modbus by IP can still start if service discovery fails. Both reboot
+page countdowns stop at zero and initiate exactly one redirect, including
+when navigation cannot complete. Diagnostics adds PSU connection state, reset
+reason code, real/configured flash sizes, sketch size and free sketch space.
+
+Host tests compile the actual upload/restart handlers and actual main loop.
+They cover empty POSTs, begin/end failure with no numeric error, partial writes,
+aborts, complete response length, deferred restart, suppression of UART/clock
+work, an unacknowledged HTTP socket, manual/config-portal restart, repeated
+requests, normal loop behavior and millis rollover. The two real page scripts
+are also executed with stalled navigation and checked for a bounded countdown
+and one redirect. Host mocks cannot establish that the physical SDK reset,
+bootloader copy or network reconnection succeeds on this module.
+
+The old running firmware handles the upload and restart when installing a new
+image. Consequently, installing `.6` from `.5` still uses the old restart
+handler. Test the new path on a subsequent upload (or by uploading `.6` again
+after `.6` is running). Do not treat a repaired countdown alone as proof of
+a reset: check version, uptime and reset reason from a fresh IP-based request.
 
 For rollback, upload the original v1.7.0 ESP-12E binary through the same web
 page. The ESP UART bootloader and the user's original full flash backup

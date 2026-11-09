@@ -7,6 +7,7 @@
 #include <riden_modbus/riden_modbus.h>
 #include <riden_logging/clock_sync_state.h>
 #include <riden_logging/web_diagnostics.h>
+#include <riden_logging/firmware_update_state.h>
 #include <riden_modbus_bridge/riden_modbus_bridge.h>
 #include <riden_scpi/riden_scpi.h>
 #include <vxi11_server/vxi_server.h>
@@ -25,6 +26,8 @@ class RidenHttpServer
     bool begin();
     void loop(void);
     uint16_t port();
+    bool handle_pending_restart();
+    bool restart_pending() const { return firmware_update_state().restart_pending; }
 
   private:
     RidenModbus &modbus;
@@ -44,6 +47,7 @@ class RidenHttpServer
     void handle_reboot_dongle_get();
     void handle_firmware_update_post();
     void finish_firmware_update_post();
+    void request_restart();
     void handle_lxi_identification();
     void handle_not_found();
     void handle_control_get();

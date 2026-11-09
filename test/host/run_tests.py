@@ -56,13 +56,17 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         subprocess.run(cmd,check=True)
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
-        assert data['version']=='1.7.0-taxom.5' and data['requests']==10
+        assert data['version']=='1.7.0-taxom.6' and data['requests']==10
         assert data['read_retries']==data['recovered_reads']==10
         assert data['uart']['tcp_timeouts']==data['uart']['timeouts_no_rx']==10
         assert len(data['uart']['recent_timeouts'])==8
         assert data['uart']['attempts']==data['uart']['attempt_wait']['count']==21
         assert data['timing']['http_diagnostics']['max_us']==120000
         assert data['system']['wifi_rssi_dbm']==-55
+        assert data['system']['psu_connected'] is True
+        assert data['system']['reset_reason_code']==4
+        assert data['system']['flash_real_bytes']==data['system']['flash_configured_bytes']==4194304
+        assert data['system']['sketch_bytes']==530000
         assert data['clock_sync']['policy']=='output_off_only'
         assert data['clock_sync']['writes']==0 and data['clock_sync']['pending'] is False
         assert data['clock_sync']['last_check_output_known'] is False
@@ -84,7 +88,20 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         cmd[-1]=str(tmp/'http_control')
         subprocess.run(cmd,check=True)
         subprocess.run([str(tmp/'http_control')],check=True)
+        update=http_source[http_source.index('void RidenHttpServer::handle_firmware_update_post()'):
+                           http_source.index('\nvoid RidenHttpServer::handle_disconnect_client_post()')]
+        reboot=http_source[http_source.index('void RidenHttpServer::handle_reboot_dongle_get()'):
+                           http_source.index('\nvoid RidenHttpServer::handle_control_get(')]
         main_source=(root/'src/main.cpp').read_text()
+        main_loop=main_source[main_source.index('void loop()'):main_source.index('\nvoid tick()')]
+        update_test=tmp/'http_update.cpp'
+        update_test.write_text((root/'test/host/http_update.cpp').read_text().replace(
+            '// PRODUCTION_UPDATE_HANDLERS',update+'\n'+reboot).replace('// PRODUCTION_MAIN_LOOP',main_loop))
+        subprocess.run(['g++','-std=gnu++17','-g','-O1','-fsanitize=address,undefined',
+                        '-fno-omit-frame-pointer','-I'+str(root/'test/host/include'),
+                        '-I'+str(root/'include'),'-I'+str(root/'src/riden_http_server'),
+                        str(update_test),'-o',str(tmp/'http_update')],check=True)
+        subprocess.run([str(tmp/'http_update')],check=True)
         clock_handler=main_source[main_source.index('static void synchronize_clock_if_output_off()'):
                                   main_source.index('\nvoid loop()')]
         clock_test=tmp/'clock_sync.cpp'
