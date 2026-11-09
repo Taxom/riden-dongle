@@ -180,6 +180,7 @@ static bool connect_wifi(const char *hostname)
 
 void loop()
 {
+    ScopedTiming timing(main_loop_timing());
     if (connected) {
         if (clock_update_pending &&
             (!clock_update_failed || millis() - last_clock_update_attempt >= 5000UL)) {

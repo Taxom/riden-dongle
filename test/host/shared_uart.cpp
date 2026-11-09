@@ -126,8 +126,13 @@ int main(int argc,char **argv) {
     check_packet(tc2,0,{3,2,0x0a,0x27});
     std::cout<<"PASS: same-IP TCP clients with identical transaction IDs stay separate\n";
 
+    const auto no_rx_before=bus.get_uart_monitor().get_diagnostics().timeouts_no_rx;
+    const auto tcp_timeouts_before=bus.get_uart_monitor().get_diagnostics().tcp_timeouts;
     drop_next=1;tcp.enqueue(100,0,{3,0,0,0,1});bridge.loop();pump(bus);
     check_packet(tc,0,{3,2,0xea,0xa1});
+    assert(bus.get_uart_monitor().get_diagnostics().timeouts_no_rx==no_rx_before+1);
+    assert(bus.get_uart_monitor().get_diagnostics().tcp_timeouts==tcp_timeouts_before+1);
+    assert(bridge.get_diagnostics().request_time.last_us>=1050000);
     std::cout<<"PASS: one lost TCP read is retried with the original transaction ID\n";
 
     const auto discarded=bus.get_diagnostics().discarded_bytes;
@@ -138,8 +143,17 @@ int main(int argc,char **argv) {
     std::cout<<"PASS: late reply drained during recovery before retry/web reads\n";
 
     // A fresh zero is data, including after a failed UART attempt.
+    const auto crc_before=bus.get_uart_monitor().get_diagnostics().crc_errors;
+    const auto with_rx_before=bus.get_uart_monitor().get_diagnostics().timeouts_with_rx;
     corrupt_crc_next=true;tcp.enqueueClient(tc2,35,{3,0,11,0,1});bridge.loop();
     check_packet(tc2,35,{3,2,0,0});
+    const auto &observed=bus.get_uart_monitor();
+    assert(observed.get_diagnostics().crc_errors==crc_before+1);
+    assert(observed.get_diagnostics().timeouts_with_rx==with_rx_before+1);
+    const auto &bad_crc_event=observed.timeout(observed.get_diagnostics().timeout_count-1);
+    assert(bad_crc_event.rx_seen && bad_crc_event.rx_bytes==7 && bad_crc_event.bad_crc_frames==1);
+    assert(bad_crc_event.reg==11 && bad_crc_event.function==3 && bad_crc_event.argument==1);
+    assert(bad_crc_event.origin==RidenDongle::ObservedUart::Origin::Tcp);
     std::cout<<"PASS: CRC failure retried, genuine zero preserved\n";
 
     drop_next=2;tcp.enqueue(100,0,{3,0,0,0,1});bridge.loop();
@@ -168,10 +182,16 @@ int main(int argc,char **argv) {
     check_packet(tc,43,{0x83,0x0a},0);assert(Serial.requests.size()==requests);
     std::cout<<"PASS: broadcast unit rejected without arming an interceptor\n";
 
+    const auto local_timeouts_before=observed.get_diagnostics().local_timeouts;
     drop_next=true;const auto started=host_time_us;
     assert(!bus.read_holding_registers(0,&value));
     assert(host_time_us-started>=1000000);
+    assert(observed.get_diagnostics().local_timeouts==local_timeouts_before+1);
+    const auto &local_event=observed.timeout(observed.get_diagnostics().timeout_count-1);
+    assert(local_event.origin==RidenDongle::ObservedUart::Origin::Local && !local_event.rx_seen);
     next_delay_us=700000;assert(bus.read_holding_registers(0,&value));assert(value==60065);
+    assert(observed.get_diagnostics().crc_valid_frame_read.max_us>=700000);
+    assert(observed.get_diagnostics().reply_buckets[6]>=1);
     std::cout<<"PASS: local timeout drains transaction, 700ms reply stays in scope\n";
 
     assert(bus.write_holding_register(8,2700));assert(regs[8]==2700);
@@ -211,6 +231,22 @@ int main(int argc,char **argv) {
     assert(bridge.get_diagnostics().recovered_reads>=15);
     assert(bridge.get_diagnostics().uart_timeouts>=15);
     assert(bridge.get_diagnostics().invalid_responses>=1);
+    assert(observed.get_diagnostics().attempts==Serial.requests.size());
+    assert(observed.get_diagnostics().attempts==
+           observed.get_diagnostics().tcp_attempts+observed.get_diagnostics().local_attempts);
+    const auto total_timeouts=observed.get_diagnostics().tcp_timeouts+observed.get_diagnostics().local_timeouts;
+    assert(total_timeouts==observed.get_diagnostics().timeouts_no_rx+observed.get_diagnostics().timeouts_with_rx);
+    assert(observed.get_diagnostics().tcp_timeouts==bridge.get_diagnostics().uart_timeouts);
+    assert(observed.get_diagnostics().timeout_count==8);
+    for(unsigned i=1;i<8;++i) assert(observed.timeout(i).at_ms>=observed.timeout(i-1).at_ms);
+    assert(observed.get_diagnostics().first_byte.min_us>=3000);
+    const auto saved_time=host_time_us;
+    host_time_us=(uint64_t(1)<<32)-1000;
+    RidenDongle::TimingStats wrap_timing;
+    { RidenDongle::ScopedTiming timer(wrap_timing);delay(2); }
+    assert(wrap_timing.last_us==2000 && wrap_timing.average_us()==2000);
+    host_time_us=saved_time;
+    std::cout<<"PASS: passive UART timing, CRC/no-RX classification, event history and timer wrap\n";
     std::cout<<"PASS: 200 cycles of two same-IP TCs + HA + web with dropped replies\n";
 #endif
 }

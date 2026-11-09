@@ -6,10 +6,18 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using boolean = bool;
-using String = std::string;
+class String : public std::string {
+  public:
+    using std::string::string;
+    using std::string::operator=;
+    String(const std::string &value) : std::string(value) {}
+    template <class T, typename std::enable_if<std::is_arithmetic<T>::value, int>::type = 0>
+    String(T value) : std::string(std::to_string(value)) {}
+};
 using std::min;
 using std::max;
 #define PROGMEM
@@ -37,6 +45,7 @@ class Stream {
     virtual ~Stream() = default;
     virtual int available() = 0;
     virtual int read() = 0;
+    virtual int peek() { return -1; }
     virtual size_t write(uint8_t) = 0;
     virtual size_t write(const uint8_t *, size_t) = 0;
     virtual void flush() = 0;

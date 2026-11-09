@@ -66,6 +66,8 @@ class RidenModbusBridge
         uint16_t last_failed_register = 0;
         uint16_t last_failure_code = 0;
         uint8_t last_failed_function = 0;
+        TimingStats poll_time;
+        TimingStats request_time;
     };
     const Diagnostics &get_diagnostics() const { return diagnostics; }
 

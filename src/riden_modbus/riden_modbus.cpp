@@ -42,7 +42,8 @@ bool RidenModbus::begin()
 #else
     SerialRuideng.begin(riden_config.get_uart_baudrate(), SERIAL_8N1);
 #endif
-    if (!modbus.begin(&SerialRuideng)) {
+    uart_monitor.begin(SerialRuideng, riden_config.get_uart_baudrate());
+    if (!modbus.begin(&uart_monitor)) {
         LOG_LN("Failed initializing ModbusRTU");
         return false;
     }
@@ -750,8 +751,11 @@ void RidenModbus::service_uart()
         }
         return;
     }
+    uart_monitor.begin_frame();
     modbus.task();
+    uart_monitor.end_frame();
     if (!modbus.server()) {
+        uart_monitor.finish_attempt();
         last_uart_completion_us = micros();
         uart_completed = true;
     }
@@ -799,9 +803,11 @@ bool RidenModbus::read_holding_registers(const uint16_t offset, uint16_t *value,
         return false;
     }
     Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    uart_monitor.set_origin(ObservedUart::Origin::Local);
     bool res = modbus.readHreg(MODBUS_ADDRESS, offset, value, numregs,
                               [this, &result](Modbus::ResultCode code, uint16_t, void *) {
                                   result = code;
+                                  uart_monitor.result(code);
                                   if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
                                   return true;
                               });
@@ -822,9 +828,11 @@ bool RidenModbus::write_holding_register(const uint16_t offset, const uint16_t v
         return false;
     }
     Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    uart_monitor.set_origin(ObservedUart::Origin::Local);
     bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value,
                               [this, &result](Modbus::ResultCode code, uint16_t, void *) {
                                   result = code;
+                                  uart_monitor.result(code);
                                   if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
                                   return true;
                               });
@@ -845,9 +853,11 @@ bool RidenModbus::write_holding_registers(const uint16_t offset, uint16_t *value
         return false;
     }
     Modbus::ResultCode result = Modbus::EX_TIMEOUT;
+    uart_monitor.set_origin(ObservedUart::Origin::Local);
     bool res = modbus.writeHreg(MODBUS_ADDRESS, offset, value, numregs,
                               [this, &result](Modbus::ResultCode code, uint16_t, void *) {
                                   result = code;
+                                  uart_monitor.result(code);
                                   if (code != Modbus::EX_SUCCESS) uart_recovery_pending = true;
                                   return true;
                               });

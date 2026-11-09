@@ -142,6 +142,7 @@ bool RidenHttpServer::begin()
 
 void RidenHttpServer::loop(void)
 {
+    ScopedTiming timing(http_poll_time);
     server.handleClient();
 }
 
@@ -410,6 +411,7 @@ void RidenHttpServer::handle_control_get(void)
 
 void RidenHttpServer::handle_status_get(void)
 {
+    ScopedTiming timing(status_time);
     AllValues all_values;
     // get a subset of the values, reading in bulk to be fast
     // Make sure this is below 800ms, because otherwise the graph will suffer
@@ -652,21 +654,39 @@ void RidenHttpServer::handle_not_found()
     server.send(404, "text/plain", "404: Not found");
 }
 
+static void append_timing(String &json, const char *name, const TimingStats &stats)
+{
+    json += ",\"";
+    json += name;
+    json += "\":{\"count\":";
+    json += String(stats.count);
+    json += ",\"min_us\":";
+    json += String(stats.count ? stats.min_us : 0);
+    json += ",\"avg_us\":";
+    json += String(stats.average_us());
+    json += ",\"max_us\":";
+    json += String(stats.max_us);
+    json += ",\"last_us\":";
+    json += String(stats.last_us);
+    json += "}";
+}
+
 void RidenHttpServer::handle_modbus_diagnostics()
 {
+    ScopedTiming timing(diagnostics_time);
     // Counters only: observing diagnostics must not add UART requests.
     const auto &tcp = bridge.get_diagnostics();
     const auto &uart = modbus.get_diagnostics();
-    char json[900];
-    snprintf(json, sizeof(json),
+    char counters[900];
+    snprintf(counters, sizeof(counters),
              "{\"version\":\"%s\",\"uptime_ms\":%lu,"
              "\"requests\":%lu,\"read_retries\":%lu,\"recovered_reads\":%lu,"
              "\"uart_timeouts\":%lu,\"invalid_responses\":%lu,\"uart_exceptions\":%lu,"
              "\"gateway_failures\":%lu,\"last_failed_function\":%u,"
              "\"last_failed_register\":%u,\"last_failure_code\":%u,"
              "\"recovery_waits\":%lu,\"discarded_bytes\":%lu,"
-             "\"rx_overruns\":%lu,\"rx_errors\":%lu}",
-             RidenDongle::version_string, millis(),
+             "\"rx_overruns\":%lu,\"rx_errors\":%lu",
+             RidenDongle::version_string, (unsigned long)millis(),
              (unsigned long)tcp.requests, (unsigned long)tcp.read_retries,
              (unsigned long)tcp.recovered_reads, (unsigned long)tcp.uart_timeouts,
              (unsigned long)tcp.invalid_responses, (unsigned long)tcp.uart_exceptions,
@@ -674,6 +694,59 @@ void RidenHttpServer::handle_modbus_diagnostics()
              tcp.last_failed_register, tcp.last_failure_code,
              (unsigned long)uart.recovery_waits, (unsigned long)uart.discarded_bytes,
              (unsigned long)uart.rx_overruns, (unsigned long)uart.rx_errors);
+    String json;
+    json.reserve(4096);
+    json += counters;
+
+    const auto &monitor = modbus.get_uart_monitor();
+    const auto &rx = monitor.get_diagnostics();
+    json += ",\"uart\":{\"attempts\":" + String(rx.attempts);
+    json += ",\"tcp_attempts\":" + String(rx.tcp_attempts);
+    json += ",\"local_attempts\":" + String(rx.local_attempts);
+    json += ",\"tcp_timeouts\":" + String(rx.tcp_timeouts);
+    json += ",\"local_timeouts\":" + String(rx.local_timeouts);
+    json += ",\"timeouts_no_rx\":" + String(rx.timeouts_no_rx);
+    json += ",\"timeouts_with_rx\":" + String(rx.timeouts_with_rx);
+    json += ",\"rx_bytes\":" + String(rx.rx_bytes);
+    json += ",\"rx_frames\":" + String(rx.rx_frames);
+    json += ",\"crc_errors\":" + String(rx.crc_errors);
+    json += ",\"short_frames\":" + String(rx.short_frames);
+    json += ",\"capture_overflows\":" + String(rx.capture_overflows);
+    append_timing(json, "first_byte", rx.first_byte);
+    append_timing(json, "crc_valid_frame_read", rx.crc_valid_frame_read);
+    append_timing(json, "attempt_wait", rx.attempt_wait);
+    json += ",\"reply_buckets_le_ms\":[5,10,20,50,100,500,null],\"reply_buckets\":[";
+    for (unsigned i = 0; i < 7; ++i) {
+        if (i) json += ",";
+        json += String(rx.reply_buckets[i]);
+    }
+    json += "],\"recent_timeouts\":[";
+    for (unsigned i = 0; i < rx.timeout_count; ++i) {
+        const auto &event = monitor.timeout(i);
+        if (i) json += ",";
+        json += "{\"at_ms\":" + String(event.at_ms);
+        json += ",\"source\":\"";
+        json += event.origin == ObservedUart::Origin::Tcp ? "tcp" : "local";
+        json += "\",\"function\":" + String(event.function);
+        json += ",\"register\":" + String(event.reg);
+        json += ",\"argument\":" + String(event.argument);
+        json += ",\"duration_us\":" + String(event.duration_us);
+        json += ",\"rx_seen\":";
+        json += event.rx_seen ? "true" : "false";
+        json += ",\"rx_bytes\":" + String(event.rx_bytes);
+        json += ",\"bad_crc_frames\":" + String(event.bad_crc_frames) + "}";
+    }
+    json += "]},\"timing\":{\"units\":\"microseconds\",\"wall_time_includes_waits\":true";
+    append_timing(json, "tcp_poll", tcp.poll_time);
+    append_timing(json, "tcp_request", tcp.request_time);
+    append_timing(json, "http_poll", http_poll_time);
+    append_timing(json, "http_status", status_time);
+    append_timing(json, "http_diagnostics", diagnostics_time);
+    append_timing(json, "main_loop", main_loop_timing());
+    json += "},\"system\":{\"free_heap_bytes\":" + String(ESP.getFreeHeap());
+    json += ",\"largest_free_block_bytes\":" + String(ESP.getMaxFreeBlockSize());
+    json += ",\"wifi_rssi_dbm\":" + String(WiFi.RSSI());
+    json += ",\"cpu_mhz\":" + String(ESP.getCpuFreqMHz()) + "}}";
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "application/json", json);
 }

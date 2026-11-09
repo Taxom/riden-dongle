@@ -30,6 +30,9 @@ class RidenHttpServer
     RidenModbusBridge &bridge;
     VXI_Server &vxi_server;
     ESP8266WebServer server;
+    TimingStats http_poll_time;
+    TimingStats status_time;
+    TimingStats diagnostics_time;
 
     void handle_root_get();
     void handle_psu_get();

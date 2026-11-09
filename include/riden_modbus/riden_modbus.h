@@ -5,6 +5,7 @@
 #pragma once
 
 #include "riden_modbus_registers.h"
+#include "observed_uart.h"
 
 #include <ModbusRTU.h>
 #include <WString.h>
@@ -100,6 +101,7 @@ class RidenModbus
         uint32_t rx_errors = 0;
     };
     const Diagnostics &get_diagnostics() const { return diagnostics; }
+    const ObservedUart &get_uart_monitor() const { return uart_monitor; }
 
     bool begin();
     bool loop();
@@ -300,6 +302,7 @@ class RidenModbus
 
   private:
     ModbusRTU modbus;
+    ObservedUart uart_monitor;
     bool initialized = false;
     String type;
     Diagnostics diagnostics;

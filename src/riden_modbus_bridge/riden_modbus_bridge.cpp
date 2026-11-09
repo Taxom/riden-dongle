@@ -48,6 +48,7 @@ bool RidenModbusBridge::begin()
 
 bool RidenModbusBridge::loop()
 {
+    ScopedTiming timing(diagnostics.poll_time);
     modbus_tcp.task();
     return true;
 }
@@ -85,6 +86,7 @@ Modbus::ResultCode RidenModbusBridge::modbus_tcp_raw_callback(uint8_t *data, uin
     if (!source->to_server) {
         return Modbus::EX_PASSTHROUGH;
     }
+    ScopedTiming timing(diagnostics.request_time);
 
     // Draining the previous UART request can send its TCP response. In
     // particular, do not use rawResponce() there: it frees task()'s receive
@@ -127,10 +129,12 @@ Modbus::ResultCode RidenModbusBridge::modbus_tcp_raw_callback(uint8_t *data, uin
     for (unsigned attempt = 0; attempt < (read_only ? 2U : 1U); ++attempt) {
         if (!riden_modbus.prepare_request()) break;
         if (attempt) ++diagnostics.read_retries;
+        riden_modbus.uart_monitor.set_origin(ObservedUart::Origin::Tcp);
         riden_modbus.modbus.onRaw(::modbus_rtu_raw_callback);
         const bool sent = riden_modbus.modbus.rawRequest(
             slave_id, data, len,
             [this](Modbus::ResultCode code, uint16_t, void *) {
+                riden_modbus.uart_monitor.result(code);
                 if (request_pending) {
                     // onRaw already sent successful/exception replies. A
                     // failure is finalized or retried only AFTER task()
