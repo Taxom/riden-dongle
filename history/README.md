@@ -32,4 +32,5 @@ Later stages continue as separate commits and version branches:
 
 - [`versions/1.7.0-taxom.8`](https://github.com/Taxom/riden-dongle/tree/versions/1.7.0-taxom.8): persistent optional detailed diagnostics, default off; core V2 configuration stays compatible with earlier firmware. The original 1–7 snapshots and bundle above remain unchanged.
 - [`versions/1.7.0-taxom.9`](https://github.com/Taxom/riden-dongle/tree/versions/1.7.0-taxom.9): strict HTTP/live-register input validation and the standalone final OFF/ON diagnostics acceptance tester, including expected rejections of malformed or out-of-range requests.
+- [`versions/1.7.0-taxom.10`](https://github.com/Taxom/riden-dongle/tree/versions/1.7.0-taxom.10), source commit `f31e3a39a3d0cab2adc6d7acf08f5db1b06ed227`: per-quantity web/API precision, RD6006P 3/4 decimal places, active-range formatting and decimal setpoint round-trip preservation. The build/CI and 94 host groups passed; the user installed this build and confirmed the displayed decimal places. The broader hardware acceptance remains the version 9 run recorded in `FORK_NOTES.md`.
 

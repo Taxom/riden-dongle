@@ -496,7 +496,7 @@ The runtime validation passed on hardware, and the source checks include
 legacy desktop-tool checks. This fulfills the agreed final acceptance before
 integrating the development branch into main while preserving its commits.
 
-## Per-quantity web precision (taxom.10 candidate)
+## Per-quantity web precision (taxom.10)
 
 RD6006P already used the correct register divisors (1000 for voltage, 10000 for
 current), but its Control page inherited two decimal places for both values.
@@ -521,7 +521,15 @@ The host suite now reports 94 passing groups, including real RTU/API checks for
 RD6006P, RD6006, both RD6012P ranges, RD6018P and RD6030; exhaustive round trips
 for all 60,101 voltage plus 60,001 current RD6006P setpoints; HTTP least-digit
 writes; and Node tests of the shipped page's actual UI/chart code. Both desktop
-tool suites (20 and 12 checks) also pass, and the ESP12E build succeeds. These
-are host/build results; taxom.10 has not yet been flashed during preparation.
+tool suites (20 and 12 checks) also pass, and the ESP12E build succeeds. GitHub
+CI passed for source commit `f31e3a39a3d0cab2adc6d7acf08f5db1b06ed227`.
+
+On 2026-11-09, the user installed taxom.10 on the same RD6006P/UniSoft ESP-12F
+and reported that all expected decimal places were now displayed. This is a
+device-side display confirmation. No repeat of the full taxom.9 multi-client
+load test or physical least-step voltage/current measurement was reported.
+
+The tested source is preserved on `versions/1.7.0-taxom.10`; the original
+version 1–9 snapshots remain intact.
 
 After installing, reload Control with Ctrl+F5 to refresh the embedded page.

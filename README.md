@@ -9,10 +9,12 @@ HTTP update/restart handling and optional detailed diagnostics. Firmware
 **1.7.0-taxom.9** passed the final RD6006P/UniSoft ESP-12F hardware acceptance
 test with two Modbus readers, a controller and HTTP load in both diagnostic modes.
 
-The **1.7.0-taxom.10** candidate preserves RD6006P's separate voltage/current
+Firmware **1.7.0-taxom.10** preserves RD6006P's separate voltage/current
 resolution throughout the web UI and status API (3/4 decimal places), and fixes
 one-register-step loss when decimal setpoints are converted back to integers.
-It has build/host validation; the recorded hardware acceptance above is taxom.9.
+Its build/CI checks pass, and the user installed it and reported that all expected
+decimal places are present. The full multi-client hardware acceptance above
+remains the taxom.9 run.
 
 See [fork behavior and test results](FORK_NOTES.md),
 [preserved version history](history/README.md), and the
