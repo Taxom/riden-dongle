@@ -82,7 +82,6 @@ bool RidenModbus::begin()
         // i_multi is not constant (depends on the current range)
         this->i_multi_ranges[0] = {10000.0, "6A"};  // 6 A range: 0.1 mA units
         this->i_multi_ranges[1] = {1000.0, "12A"};  // 12 A range: 1 mA units
-        this->precision = 3;               // +1 over default for the higher resolution
         this->i_max = 12.1;
     } else if (60060 <= id && id <= 60064) {
         this->type = "RD6006";
@@ -924,12 +923,12 @@ double RidenModbus::values_to_power(const uint16_t *values)
 
 uint16_t RidenModbus::voltage_to_value(const double voltage)
 {
-    return uint16_t(voltage * v_multi);
+    return uint16_t(std::round(voltage * v_multi));
 }
 
 uint16_t RidenModbus::current_to_value(const double current)
 {
-    return uint16_t(current * i_multi);
+    return uint16_t(std::round(current * i_multi));
 }
 
 double RidenModbus::values_to_temperature(const uint16_t *values)

@@ -495,3 +495,33 @@ The runtime validation passed on hardware, and the source checks include
 82 ASan/UBSan firmware checks, 20 final-tester fault-injection checks and 12
 legacy desktop-tool checks. This fulfills the agreed final acceptance before
 integrating the development branch into main while preserving its commits.
+
+## Per-quantity web precision (taxom.10 candidate)
+
+RD6006P already used the correct register divisors (1000 for voltage, 10000 for
+current), but its Control page inherited two decimal places for both values.
+The status JSON also rounded current to three decimals, losing its last digit
+before the browser could display it. Chart statistics/tooltips and sub-ampere
+current on the Details page applied their own coarse formatting.
+
+Voltage/current precision now follows each active register divisor. The status
+API includes `voltage_precision` and `current_precision`; RD6006P reports 3/4.
+The legacy `precision` field remains as voltage precision, and the page can still
+read old shared-precision responses. Indication, input step/max/value, battery
+voltage, chart statistics/tooltips and Details formatting preserve those digits.
+RD6012P current precision updates after a range switch; RD6018P has three digits
+from its existing divisors. The register scaling itself is unchanged.
+
+Decimal-to-register conversion now rounds instead of truncating the binary
+floating-point product. Truncation could turn a valid 1.001 V into register 1000
+or 0.0003 A into register 2. Numeric validation still runs before conversion,
+and Modbus TCP integer writes keep their existing policy.
+
+The host suite now reports 94 passing groups, including real RTU/API checks for
+RD6006P, RD6006, both RD6012P ranges, RD6018P and RD6030; exhaustive round trips
+for all 60,101 voltage plus 60,001 current RD6006P setpoints; HTTP least-digit
+writes; and Node tests of the shipped page's actual UI/chart code. Both desktop
+tool suites (20 and 12 checks) also pass, and the ESP12E build succeeds. These
+are host/build results; taxom.10 has not yet been flashed during preparation.
+
+After installing, reload Control with Ctrl+F5 to refresh the embedded page.

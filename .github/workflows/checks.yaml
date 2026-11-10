@@ -18,10 +18,13 @@ jobs:
           python-version: '3.12'
       - name: Install PlatformIO
         run: python -m pip install -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Build ESP-12E / ESP-12F firmware
         run: pio run -e esp12e
         env:
-          VERSION: 1.7.0-taxom.9
+          VERSION: 1.7.0-taxom.10
       - name: Test overlapping TCP and local UART transactions
         run: python test/host/run_tests.py
       - name: Test desktop multi-client control tool offline

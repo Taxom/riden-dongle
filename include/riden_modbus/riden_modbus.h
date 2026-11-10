@@ -156,7 +156,10 @@ class RidenModbus
     bool supports_current_ranges() { return i_multi_ranges[0].multiplier != 0.0; }
     const char *get_current_range_label(uint8_t i) { return i_multi_ranges[i & 1].label; }
 
-    uint8_t get_precision() { return precision; }
+    uint8_t get_voltage_precision() const { return multiplier_precision(v_multi); }
+    uint8_t get_current_precision() const { return multiplier_precision(i_multi); }
+    // Retain the old shared field for clients predating per-quantity precision.
+    uint8_t get_precision() const { return get_voltage_precision(); }
 
     bool is_battery_mode(bool &battery_mode);
 
@@ -333,7 +336,16 @@ class RidenModbus
             i_multi = i_multi_ranges[range & 1].multiplier;
     }
 
-    uint8_t precision = 2; // precision to display for V/I on the control page (default)
+    static uint8_t multiplier_precision(double multiplier)
+    {
+        // Register divisors are powers of ten, including the active current range.
+        uint8_t digits = 0;
+        while (multiplier >= 10.0) {
+            multiplier /= 10.0;
+            ++digits;
+        }
+        return digits;
+    }
 
     /**
      *  Wait until no transaction is active or timeout.

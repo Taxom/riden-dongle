@@ -31,21 +31,21 @@ static const std::list<uint32_t> uart_baudrates = {
     1000000,
 };
 
-static String voltage_to_string(double voltage)
+static String voltage_to_string(double voltage, uint8_t precision)
 {
     if (voltage < 1) {
-        return String(voltage * 1000, 0) + " mV";
+        return String(voltage * 1000, precision > 3 ? precision - 3 : 0) + " mV";
     } else {
-        return String(voltage, 3) + " V";
+        return String(voltage, precision) + " V";
     }
 }
 
-static String current_to_string(double current)
+static String current_to_string(double current, uint8_t precision)
 {
     if (current < 1) {
-        return String(current * 1000, 0) + " mA";
+        return String(current * 1000, precision > 3 ? precision - 3 : 0) + " mA";
     } else {
-        return String(current, 3) + " A";
+        return String(current, precision) + " A";
     }
 }
 
@@ -181,14 +181,14 @@ void RidenHttpServer::handle_psu_get()
         server.sendContent("            <table class='info'>");
         server.sendContent("                <tbody>");
         send_info_row("Output", all_values.output_on ? "On" : "Off");
-        send_info_row("Set", voltage_to_string(all_values.voltage_set) + " / " + current_to_string(all_values.current_set));
+        send_info_row("Set", voltage_to_string(all_values.voltage_set, modbus.get_voltage_precision()) + " / " + current_to_string(all_values.current_set, modbus.get_current_precision()));
         send_info_row("Out",
-                      voltage_to_string(all_values.voltage_out) + " / " + current_to_string(all_values.current_out) + " / " + power_to_string(all_values.power_out));
+                      voltage_to_string(all_values.voltage_out, modbus.get_voltage_precision()) + " / " + current_to_string(all_values.current_out, modbus.get_current_precision()) + " / " + power_to_string(all_values.power_out));
         send_info_row("Protection", protection_to_string(all_values.protection));
         send_info_row("Output Mode", outputmode_to_string(all_values.output_mode));
         send_info_row("Current Range", String(all_values.current_range, 10));
         send_info_row("Battery Mode", all_values.is_battery_mode ? "Yes" : "No");
-        send_info_row("Voltage Battery", voltage_to_string(all_values.voltage_battery));
+        send_info_row("Voltage Battery", voltage_to_string(all_values.voltage_battery, modbus.get_voltage_precision()));
         send_info_row("Ah", String(all_values.ah, 3) + " Ah");
         send_info_row("Wh", String(all_values.wh, 3) + " Wh");
         server.sendContent("                </tbody>");
@@ -199,7 +199,7 @@ void RidenHttpServer::handle_psu_get()
         server.sendContent("            <h2>Environment</h2>");
         server.sendContent("            <table class='info'>");
         server.sendContent("                <tbody>");
-        send_info_row("Voltage In", voltage_to_string(all_values.voltage_in));
+        send_info_row("Voltage In", voltage_to_string(all_values.voltage_in, 2));
         send_info_row("System Temperature", String(all_values.system_temperature_celsius, 0) + "&deg;C" + " / " + String(all_values.system_temperature_fahrenheit, 0) + "&deg;F");
         send_info_row("Probe Temperature", String(all_values.probe_temperature_celsius, 0) + "&deg;C" + " / " + String(all_values.probe_temperature_fahrenheit, 0) + "&deg;F");
         server.sendContent("                </tbody>");
@@ -253,10 +253,10 @@ void RidenHttpServer::handle_psu_get()
         server.sendContent("                <tbody>");
         for (int preset = 0; preset < NUMBER_OF_PRESETS; preset++) {
             server.sendContent("<tr><th colspan='2' style='text-align:left'>Preset " + String(preset + 1, 10) + " (M" + String(preset + 1, 10) + ")" + "</th></tr>");
-            send_info_row("Preset Voltage", voltage_to_string(all_values.presets[preset].voltage));
-            send_info_row("Preset Current", current_to_string(all_values.presets[preset].current));
-            send_info_row("Preset OVP", voltage_to_string(all_values.presets[preset].over_voltage_protection));
-            send_info_row("Preset OCP", current_to_string(all_values.presets[preset].over_current_protection));
+            send_info_row("Preset Voltage", voltage_to_string(all_values.presets[preset].voltage, modbus.get_voltage_precision()));
+            send_info_row("Preset Current", current_to_string(all_values.presets[preset].current, modbus.get_current_precision()));
+            send_info_row("Preset OVP", voltage_to_string(all_values.presets[preset].over_voltage_protection, modbus.get_voltage_precision()));
+            send_info_row("Preset OCP", current_to_string(all_values.presets[preset].over_current_protection, modbus.get_current_precision()));
         }
         server.sendContent("                </tbody>");
         server.sendContent("            </table>");
@@ -476,12 +476,14 @@ bool RidenHttpServer::send_status(const char *failure_message)
     // get a subset of the values, reading in bulk to be fast
     // Make sure this is below 800ms, because otherwise the graph will suffer
     if (modbus.is_connected() && modbus.get_all_values(all_values, true)) {
+        const uint8_t voltage_precision = modbus.get_voltage_precision();
+        const uint8_t current_precision = modbus.get_current_precision();
         String s = "{";
         s += "\"out_on\": " + String(all_values.output_on ? "true" : "false");
-        s += ",\"set_v\": " + String(all_values.voltage_set, 3);
-        s += ",\"set_c\": " + String(all_values.current_set, 3);
-        s += ",\"out_v\": " + String(all_values.voltage_out, 3);
-        s += ",\"out_c\": " + String(all_values.current_out, 3);
+        s += ",\"set_v\": " + String(all_values.voltage_set, voltage_precision);
+        s += ",\"set_c\": " + String(all_values.current_set, current_precision);
+        s += ",\"out_v\": " + String(all_values.voltage_out, voltage_precision);
+        s += ",\"out_c\": " + String(all_values.current_out, current_precision);
         s += ",\"batt_mode\": " + String(all_values.is_battery_mode ? "true" : "false");
         s += ",\"cvmode\": " + String(all_values.output_mode == OutputMode::CONSTANT_VOLTAGE ? "true" : "false");
         s += ",\"prot\": \"" + protection_to_string(all_values.protection) + "\"";
@@ -502,6 +504,8 @@ bool RidenHttpServer::send_status(const char *failure_message)
             s += ",\"ranges\": [\"" + String(modbus.get_current_range_label(0)) + "\",\"" + String(modbus.get_current_range_label(1)) + "\"]";
         }
         s += ",\"precision\": " + String(modbus.get_precision());
+        s += ",\"voltage_precision\": " + String(voltage_precision);
+        s += ",\"current_precision\": " + String(current_precision);
         s += "}";
         server.send(200, "application/json", s);
         success = true;

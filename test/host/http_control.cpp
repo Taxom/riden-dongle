@@ -67,7 +67,7 @@ static void emulate(const std::vector<uint8_t> &request) {
     } else if(fn==6) {
         assert((reg==18 && argument<=1) || reg==8 || reg==9);
         ++writes;
-        if(apply_write) regs[18]=argument;
+        if(apply_write) regs[reg]=argument;
         pdu.assign(request.begin()+1,request.begin()+6);
         if(fail_after_write) {failing_reg=20;read_failures=2;fail_after_write=false;}
         if(fail_reconcile) {failing_reg=18;read_failures=2;fail_reconcile=false;}
@@ -123,6 +123,14 @@ int main(int argc,char **) {
     }
     assert(regs[8]==2600 && regs[9]==500);
     std::cout<<"PASS: valid web zero, bounds, fractions and decimal exponent still work\n";
+    http.server.plain="1.001";http.handle_set_v();
+    assert(http.server.status==200 && regs[8]==1001);
+    http.server.plain="0.0003";http.handle_set_i();
+    assert(http.server.status==200 && regs[9]==3);
+    http.server.plain="0.0501";http.handle_set_i();
+    assert(http.server.status==200 && regs[9]==501);
+    assert(bus.set_voltage_set(2.6) && bus.set_current_set(0.05));
+    std::cout<<"PASS: HTTP writes preserve RD6006P millivolts and 0.1 mA without losing one register step\n";
     for(const char *text:{"0", "1", "2", "-1", "abc", ""}) {
         const auto before=Serial.requests.size();http.server.plain=text;http.handle_set_i_range();
         assert(http.server.status==400 && Serial.requests.size()==before);

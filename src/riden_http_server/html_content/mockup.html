@@ -71,7 +71,7 @@
         font-family: "Noto Sans Mono", monospace;
         text-align: right !important;
         white-space: nowrap;
-        width: 8ch;
+        width: 10ch;
       }
       .smalltext {
         font-size: 1em;
@@ -375,6 +375,18 @@
       this.refreshData();
     }
 
+    setMetricFormat(metric, format) {
+      const series = this._series.find((s) => s.metric === metric);
+      if (series) series.format = format;
+    }
+
+    _formatValue(value, metric) {
+      const series = this._series.find((s) => s.metric === metric);
+      const format = series?.format ?? this._format;
+      const formatter = typeof format === "function" ? format("value") : d3.format(format);
+      return formatter(value);
+    }
+
     setXLimits(startOffset, endOffset) {
       this._xStart = startOffset;
       this._xEnd = endOffset;
@@ -462,10 +474,6 @@
       const yTickFormatter =
         typeof this._format === "function"
           ? this._format("axis")
-          : d3.format(this._format);
-      const yValueFormatter =
-        typeof this._format === "function"
-          ? this._format("value")
           : d3.format(this._format);
 
       const boundaries = {
@@ -812,7 +820,7 @@
               .data(tooltipMetrics)
               .text((d) =>
                 row[d.metric] !== null
-                  ? yValueFormatter(row[d.metric])
+                  ? this._formatValue(row[d.metric], d.metric)
                   : "n/a"
               );
           };
@@ -912,13 +920,9 @@
         this._yMax !== undefined ? this._yMax : -Infinity,
       ];
 
-      const yValueFormatter =
-        typeof this._format === "function"
-          ? this._format("value")
-          : d3.format(this._format);
-      const formatter = (v) =>
+      const formatter = (v, metric) =>
         v !== null && v !== undefined
-          ? yValueFormatter(v).padEnd(9, " ")
+          ? this._formatValue(v, metric).padEnd(9, " ")
           : "n/a      ";
 
       const legendValues = [
@@ -960,7 +964,7 @@
             text:
               s.label.padEnd(15, " ") +
               legendValues
-                .map((v) => `${v}: ${formatter(aggs[v.toLowerCase()])}`)
+                .map((v) => `${v}: ${formatter(aggs[v.toLowerCase()], s.metric)}`)
                 .join(""),
           });
         }
@@ -1058,24 +1062,24 @@
       return;
     }
     const obj = JSON.parse(data);
-    var precision = obj.precision != null ? obj.precision : 2;
-    // update step for input set_v and set_c based on precision
-    const step = (1 / Math.pow(10, precision)).toFixed(precision);
-    document.getElementById("set_v").step = step;
-    document.getElementById("set_c").step = step;
+    const voltagePrecision = obj.voltage_precision ?? obj.precision ?? 2;
+    const currentPrecision = obj.current_precision ?? obj.precision ?? 2;
+    // Each register has its own resolution; current ranges can change it.
+    document.getElementById("set_v").step = (10 ** -voltagePrecision).toFixed(voltagePrecision);
+    document.getElementById("set_c").step = (10 ** -currentPrecision).toFixed(currentPrecision);
     // update fields to show the current values with the correct precision
-    self.out_v.innerHTML = obj.out_v.toFixed(precision).padStart(precision + 4, " ") + " V";
-    self.out_i.innerHTML = obj.out_c.toFixed(precision).padStart(precision + 4, " ") + " A";
+    self.out_v.innerHTML = obj.out_v.toFixed(voltagePrecision).padStart(voltagePrecision + 4, " ") + " V";
+    self.out_i.innerHTML = obj.out_c.toFixed(currentPrecision).padStart(currentPrecision + 4, " ") + " A";
     if (full_set) {
-      self.set_v.value = obj.set_v.toFixed(precision);
-      self.set_c.value = obj.set_c.toFixed(precision);
+      self.set_v.value = obj.set_v.toFixed(voltagePrecision);
+      self.set_c.value = obj.set_c.toFixed(currentPrecision);
     }
     document
       .getElementById("set_v")
-      .setAttribute("max", obj.max_v.toFixed(precision));
+      .setAttribute("max", obj.max_v.toFixed(voltagePrecision));
     document
       .getElementById("set_c")
-      .setAttribute("max", obj.max_c.toFixed(precision));
+      .setAttribute("max", obj.max_c.toFixed(currentPrecision));
     if (obj.out_on) {
       document.getElementById("toggle").classList.add("is_on");
     } else {
@@ -1094,7 +1098,7 @@
       self.ext_t_c.innerHTML = obj.ext_t_c.toFixed(1).padStart(6, " ");
     }
     self.int_t_c.innerHTML = obj.int_t_c.toFixed(1).padStart(6, " ");
-    self.batt_v.innerHTML = obj.batt_v.toFixed(2).padStart(6, " ");
+    self.batt_v.innerHTML = obj.batt_v.toFixed(voltagePrecision).padStart(voltagePrecision + 4, " ");
     self.ah.innerHTML = obj.ah.toFixed(3).padStart(8, " ");
     self.wh.innerHTML = obj.wh.toFixed(3).padStart(8, " ");
     let img = "nobatt";
@@ -1111,6 +1115,8 @@
     document.getElementById("ocp").style.display = "none";
     document.getElementById(img).style.display = "inline";
     if (self.chart) {
+      self.chart.setMetricFormat("out_v", `.${voltagePrecision}f`);
+      self.chart.setMetricFormat("out_c", `.${currentPrecision}f`);
       self.chart.appendData({
         date: new Date(),
         out_v: obj.out_v,

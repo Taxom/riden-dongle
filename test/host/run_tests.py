@@ -127,3 +127,29 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
                         '-fno-omit-frame-pointer','-I'+str(root/'test/host/include'),
                         '-I'+str(root/'include'),str(clock_test),'-o',str(tmp/'clock_sync')],check=True)
         subprocess.run([str(tmp/'clock_sync')],check=True)
+        display_functions=http_source[http_source.index('static String voltage_to_string('):
+                                      http_source.index('\nstatic String power_to_string(')]
+        display_test=tmp/'display_precision.cpp'
+        display_test.write_text((root/'test/host/display_precision.cpp').read_text().replace(
+            '// PRODUCTION_DISPLAY_FUNCTIONS',display_functions+'\n'+protection+'\n'+status))
+        cmd[cmd.index(str(control_test))]=str(display_test)
+        cmd[-1]=str(tmp/'display_precision')
+        subprocess.run(cmd,check=True)
+        for model,current_range,v_digits,i_digits in [
+            (60065,0,3,4),(60060,0,2,3),(60125,0,3,4),
+            (60125,1,3,3),(60185,0,3,3),(60301,0,2,2)]:
+            result=subprocess.run([str(tmp/'display_precision'),str(model),str(current_range),
+                                   str(v_digits),str(i_digits)],check=True,text=True,stdout=subprocess.PIPE)
+            data=json.loads(result.stdout.splitlines()[0])
+            assert data['voltage_precision']==data['precision']==v_digits
+            assert data['current_precision']==i_digits
+            assert data['set_v']==2601/10**v_digits and data['out_v']==2603/10**v_digits
+            assert data['set_c']==501/10**i_digits and data['out_c']==503/10**i_digits
+            if model==60125:
+                changed=json.loads(result.stdout.splitlines()[1])
+                changed_digits=3 if current_range==0 else 4
+                assert changed['current_precision']==changed_digits
+                assert changed['set_c']==501/10**changed_digits
+            print('PASS: model %d range %d API precision, scaled values and decimal read/write preservation' %
+                  (model,current_range))
+        subprocess.run(['node',str(root/'test/host/web_precision.js')],check=True,cwd=root)
