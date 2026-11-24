@@ -40,7 +40,7 @@ class HostNetworkClient {
         socket->outgoing.emplace_back(p,p+n);return n;
     }
     void flush() {}
-    void stop() { if(socket) socket->open=false; }
+    void stop(unsigned = 0) { if(socket) socket->open=false; }
 };
 
 class HostNetworkServer {

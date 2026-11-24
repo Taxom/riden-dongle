@@ -9,6 +9,9 @@
 // ModbusSettings.h is already included by ModbusRTU. Disable the TCP
 // template's IP-only connection eviction before including its definition.
 // Two TestController processes on one PC must keep separate sockets.
+#ifndef MODBUSRTU_TIMEOUT
+#error "Include ModbusSettings.h through riden_modbus.h before overriding TCP settings"
+#endif
 #undef MODBUSIP_UNIQUE_CLIENTS
 #include <ModbusTCP.h>
 #include <list>
@@ -23,6 +26,10 @@ class RidenModbusTCP : public ModbusTCP
      * @brief Get a list of the connected clients.
      */
     std::list<IPAddress> get_connected_clients();
+    void task();
+    void touch_client(int8_t slot);
+    static constexpr uint32_t CLIENT_IDLE_MS = 60000;
+    uint32_t idle_disconnects = 0;
 
     /**
      * @brief Disconnect a client.
@@ -36,6 +43,10 @@ class RidenModbusTCP : public ModbusTCP
     int8_t current_client() const { return n; }
     bool send_response(int8_t client, uint16_t transaction, uint8_t unit,
                        const uint8_t *data, uint8_t len);
+  private:
+    void expire_clients();
+    const void *tracked_clients[MODBUSIP_MAX_CLIENTS] = {};
+    uint32_t last_activity[MODBUSIP_MAX_CLIENTS] = {};
 };
 
 /**
@@ -48,6 +59,7 @@ class RidenModbusBridge
     bool begin();
     bool loop();
 
+    uint32_t get_idle_disconnects() const { return modbus_tcp.idle_disconnects; }
     uint16_t port();
     std::list<IPAddress> get_connected_clients();
     void disconnect_client(const IPAddress &ip);

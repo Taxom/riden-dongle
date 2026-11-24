@@ -65,3 +65,47 @@ there is no detailed tracing UI, diagnostics endpoint or automatic clock change.
 The 10 ms normal / 50 ms recovery quiet guards are implementation choices,
 not a claimed documented UniSoft minimum polling interval. UART timeout
 recovery is bounded to one repeat of a read; writes are never retried.
+
+## Review follow-up
+
+All three proposals use the same `regression-checks.yaml` workflow and
+`run_all_tests.py` dispatcher. When merged together, one job builds esp12e
+and runs every host suite present. The existing release workflow is unchanged.
+
+The harness extracts production functions by textual signatures/boundaries,
+not a C++ parser. Reformatting or changing adjacent functions requires reviewing
+the extraction ranges and rerunning the tests; compilation alone cannot prove
+that every intended function was extracted.
+
+## Runtime trade-offs and review changes
+
+The TCP callback completes each UART operation synchronously. HTTP, SCPI and
+VXI processing can pause for approximately two RTU timeouts (~2 s with the
+pinned library), plus turnaround/recovery guards, when a read needs its one
+retry. Writes still have one attempt. This is a deliberate lifetime/ownership
+trade-off, not a nonblocking gateway design.
+
+IP-based eviction stays disabled so independent clients on one PC can coexist.
+Disconnected peers are cleaned up by the library; peers which still appear
+connected but send no requests/responses are closed after 60 seconds. This
+also closes a legitimate client idle for that long; it must reconnect. Active
+polling refreshes the lease. The real TCP harness checks a full table of idle
+peers, preserved active polling, slot reuse and millis rollover. An initial
+UART wait failure now returns exception 0x0b to the original slot/TID.
+
+The existing counters are exposed in `/status` under `diagnostics` (UART,
+TCP, web and idle disconnects), without extra UART queries. An include-order
+check protects the settings override, and the dependency pin is explained in
+platformio.ini.
+
+### Hardware validation still pending
+
+No isolated-branch flash, other-model run or default-baud hardware run was
+performed in this review update. Existing taxom.9 results used the combined
+fork at 115200 and do not establish those missing cases. Download the isolated
+firmware CI artifact to test this branch on supported hardware. Use output
+OFF and a disconnected load while changing firmware/baud configuration;
+verify the configured baud on both sides (the build default is 9600; saved
+settings may retain another rate). Then verify concurrent readers/web access,
+disconnect/reconnect and recovery after an interrupted connection. Do not
+claim that a host simulator reproduces electrical UART behavior.

@@ -38,6 +38,11 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
     subprocess.run(cmd,check=True)
     subprocess.run([str(tmp/'shared_uart')]+(['--reproduce'] if args.reproduce_upstream else []),check=True)
     if not args.reproduce_upstream:
+        cmd[cmd.index(str(root/'test/host/shared_uart.cpp'))]=str(root/'test/host/inactive_failure.cpp')
+        cmd[-1]=str(tmp/'inactive_failure')
+        subprocess.run(cmd,check=True)
+        subprocess.run([str(tmp/'inactive_failure')],check=True)
+        cmd[cmd.index(str(root/'test/host/inactive_failure.cpp'))]=str(root/'test/host/shared_uart.cpp')
         cmd[cmd.index(str(root/'test/host/shared_uart.cpp'))]=str(root/'test/host/tcp_sessions.cpp')
         cmd.insert(1,'-I'+str(root/'test/host/real_tcp'))
         cmd[-1]=str(tmp/'tcp_sessions')

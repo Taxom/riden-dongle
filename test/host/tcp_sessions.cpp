@@ -59,5 +59,23 @@ int main() {
     query(replacement,0,0);query(second,0,10);query(ha,0,8);
     for(unsigned i=0;i<5;++i) bridge.loop();
     check(replacement,0,60065);check(second,0,2599);check(ha,0,2600);
+    // Fill every slot with a peer which stays TCP-connected but stops polling.
+    auto fourth=server.connect(200);bridge.loop();
+    assert(bridge.get_connected_clients().size()==4);
+    for(unsigned round=0;round<3;++round) {
+        delay(25000);
+        query(ha,800+round,8);bridge.loop();
+        check(ha,800+round,2600);
+    }
+    assert(ha->open && !replacement->open && !second->open && !fourth->open);
+    assert(bridge.get_connected_clients().size()==1 && bridge.get_idle_disconnects()==3);
+    auto fresh=server.connect(100);bridge.loop();query(fresh,0,0);bridge.loop();
+    check(fresh,0,60065);
+    // Unsigned timeout arithmetic must work across millis() wrap.
+    ha->open=false;fresh->open=false;bridge.loop();
+    host_time_us=((uint64_t(1)<<32)-30000)*1000;
+    auto wrap=server.connect(201);bridge.loop();delay(30000);bridge.loop();assert(wrap->open);
+    delay(30001);bridge.loop();assert(!wrap->open);
+    std::cout<<"PASS: idle sockets expire, active clients survive, slots reopen, and millis rollover is safe\n";
     std::cout<<"PASS: real TCP parser/accept loop, two same-IP clients + HA + web, reconnect\n";
 }

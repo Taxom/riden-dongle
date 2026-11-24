@@ -16,13 +16,14 @@ namespace RidenDongle {
 class RidenHttpServer {
   public:
     RidenModbus &modbus;
+    RidenModbusBridge bridge;
     struct Http {
         String body;
         int status=0;
         void send(int code, const char *, const String &text) { status=code;body=text; }
         void sendContent(const char *) {}
     } server;
-    explicit RidenHttpServer(RidenModbus &bus) : modbus(bus) {}
+    explicit RidenHttpServer(RidenModbus &bus) : modbus(bus), bridge(bus) {}
     void handle_status_get();
     bool send_status(const char *failure_message);
     void handle_toggle_out();
@@ -92,6 +93,8 @@ int main() {
     assert(http.server.status==200 && reads[0]==1 && reads[20]==2 && reads[40]==1);
     assert(bus.get_diagnostics().local_read_retries==retried+1);
     assert(http.server.body.find("\"out_on\": false")!=String::npos);
+    assert(http.server.body.find("\"diagnostics\"")!=String::npos);
+    assert(http.server.body.find("\"local_read_retries\":"+String(retried+1))!=String::npos);
     std::cout<<"PASS: web status retries only its failed register block\n";
 
     reset_faults(http);failing_reg=0;corrupt_read=true;

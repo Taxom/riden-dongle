@@ -16,6 +16,7 @@ struct HostTCPClient {
     bool connected() const { return open; }
     IPAddress remoteIP() const { return ip; }
     void flush() {}
+    void stop(unsigned = 0) { open=false; }
     size_t write(const uint8_t *p, size_t n) { packets.emplace_back(p, p+n); return n; }
 };
 
