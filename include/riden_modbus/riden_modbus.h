@@ -158,6 +158,7 @@ class RidenModbus
 
     uint8_t get_voltage_precision() const { return multiplier_precision(v_multi); }
     uint8_t get_current_precision() const { return multiplier_precision(i_multi); }
+    uint8_t get_battery_voltage_precision() const { return 2; }
     // Retain the old shared field for clients predating per-quantity precision.
     uint8_t get_precision() const { return get_voltage_precision(); }
 
@@ -363,6 +364,7 @@ class RidenModbus
     bool write_boolean(const Register reg, boolean b);
 
     double value_to_voltage(const uint16_t value);
+    double value_to_voltage_battery(const uint16_t value);
     double value_to_voltage_in(const uint16_t value);
     double value_to_current(const uint16_t value);
     double values_to_power(const uint16_t *values);

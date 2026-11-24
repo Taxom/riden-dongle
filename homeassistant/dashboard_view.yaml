@@ -1,0 +1,8 @@
+title: RD6006P
+path: rd6006p
+type: panel
+cards:
+  - type: custom:rd6006p-card
+    title: Riden RD6006P
+    hours_to_show: 1
+    language: ru

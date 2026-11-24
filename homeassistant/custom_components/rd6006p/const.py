@@ -1,0 +1,23 @@
+"""Constants for the RD6006P integration."""
+
+DOMAIN = "rd6006p"
+VERSION = "0.1.2"
+MODEL = 60065
+DEFAULT_HOST = ""
+DEFAULT_PORT = 502
+DEFAULT_UNIT = 1
+DEFAULT_POLL = 2
+DEFAULT_SLOW_POLL = 20
+DEFAULT_TIMEOUT = 5
+DEFAULT_MAX_VOLTAGE = 3.0
+DEFAULT_MAX_CURRENT = 0.1
+MAX_VOLTAGE = 60.1
+MAX_CURRENT = 6.0
+CONF_UNIT = "unit"
+CONF_POLL = "poll_interval"
+CONF_SLOW_POLL = "slow_poll_interval"
+CONF_TIMEOUT = "timeout"
+CONF_MAX_VOLTAGE = "max_voltage"
+CONF_MAX_CURRENT = "max_current"
+CONF_EXTERNAL_PROBE = "external_probe"
+CONF_SERIAL = "serial"

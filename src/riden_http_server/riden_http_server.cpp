@@ -188,7 +188,7 @@ void RidenHttpServer::handle_psu_get()
         send_info_row("Output Mode", outputmode_to_string(all_values.output_mode));
         send_info_row("Current Range", String(all_values.current_range, 10));
         send_info_row("Battery Mode", all_values.is_battery_mode ? "Yes" : "No");
-        send_info_row("Voltage Battery", voltage_to_string(all_values.voltage_battery, modbus.get_voltage_precision()));
+        send_info_row("Voltage Battery", voltage_to_string(all_values.voltage_battery, modbus.get_battery_voltage_precision()));
         send_info_row("Ah", String(all_values.ah, 3) + " Ah");
         send_info_row("Wh", String(all_values.wh, 3) + " Wh");
         server.sendContent("                </tbody>");
@@ -487,7 +487,7 @@ bool RidenHttpServer::send_status(const char *failure_message)
         s += ",\"batt_mode\": " + String(all_values.is_battery_mode ? "true" : "false");
         s += ",\"cvmode\": " + String(all_values.output_mode == OutputMode::CONSTANT_VOLTAGE ? "true" : "false");
         s += ",\"prot\": \"" + protection_to_string(all_values.protection) + "\"";
-        s += ",\"batt_v\": " + String(all_values.voltage_battery, 3);
+        s += ",\"batt_v\": " + String(all_values.voltage_battery, modbus.get_battery_voltage_precision());
         if (all_values.probe_temperature_celsius < -50.0) {
             s += ",\"ext_t_c\": null";
         } else {

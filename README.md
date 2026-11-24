@@ -1,7 +1,9 @@
 # Riden Dongle - A Multi-Protocol Firmware for the Riden WiFi Module
 
 This is an alternative firmware for the Riden WiFi module that
-provides Modbus TCP and SCPI support as well as a web interface.
+provides Modbus TCP and SCPI support as well as a web interface. This fork also
+includes an optional [Home Assistant integration and dashboard card](homeassistant/)
+for the RD6006P.
 
 This Taxom fork adds shared multi-client UART recovery, checked web output
 commands, strict setpoint validation, output-OFF clock synchronization, reliable
@@ -15,6 +17,25 @@ one-register-step loss when decimal setpoints are converted back to integers.
 Its build/CI checks pass, and the user installed it and reported that all expected
 decimal places are present. The full multi-client hardware acceptance above
 remains the taxom.9 run.
+
+Firmware **1.7.0-taxom.11** fixes the battery-voltage channel: register 33
+uses 0.01 V per count even on precision-output P models. Bulk status, the
+individual getter, web details and `/status` now agree: raw 417 means 4.17 V.
+Output/setpoint resolution stays unchanged. Host regression tests cover both
+read paths and the status API for six model/range combinations; this release
+has not yet been tested on the physical PSU.
+
+The bundled **Home Assistant integration/card 0.1.2** supports local monitoring,
+voltage/current setpoints, output ON/OFF, battery mode and voltage, session Ah/Wh,
+and voltage/current history. It recovers after HA starts with the PSU powered
+off. Its write limits are configurable, and connecting or recovering does not
+restore old setpoints or output states. The integration is RD6006P-only
+(model 60065); the dongle firmware retains its broader model support.
+
+See the [English installation guide](homeassistant/README.md) or
+[инструкцию на русском](homeassistant/README_RU.md). Successful
+[Firmware checks](https://github.com/Taxom/riden-dongle/actions/workflows/checks.yaml)
+runs provide separate firmware and Home Assistant ZIP artifacts.
 
 See [fork behavior and test results](FORK_NOTES.md),
 [preserved version history](history/README.md), and the

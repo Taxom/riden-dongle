@@ -1,0 +1,130 @@
+{
+  "title": "Riden RD6006P",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Riden RD6006P",
+        "description": "Read-only connection check. Connecting does not change the PSU. Initial HA write limits: 3 V / 0.1 A; change them in integration options.",
+        "data": {
+          "host": "IP address or host name",
+          "port": "Modbus TCP port",
+          "unit": "Unit / slave ID"
+        }
+      },
+      "reconfigure": {
+        "title": "Riden RD6006P",
+        "data": {
+          "host": "IP address or host name",
+          "port": "Modbus TCP port",
+          "unit": "Unit / slave ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot read the device. Check address, port, network and free TCP slots.",
+      "wrong_model": "This integration requires RD6006P model 60065.",
+      "wrong_serial": "This is a different serial number. Add it as a separate device.",
+      "invalid_host": "Enter a host name or IP address without http://."
+    },
+    "abort": {
+      "already_configured": "This power supply is already configured.",
+      "reconfigure_successful": "Connection updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "RD6006P",
+        "description": "These limits apply only to HA writes. Saving does not change the PSU setpoints or hardware protections. External probe is hidden by default; enable only when connected.",
+        "data": {
+          "max_voltage": "Maximum voltage writable from HA (V)",
+          "max_current": "Maximum current writable from HA (A)",
+          "poll_interval": "Main poll interval (seconds)",
+          "slow_poll_interval": "Slow poll interval (seconds)",
+          "timeout": "Response timeout (seconds)",
+          "external_probe": "External temperature probe is connected"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "voltage": {
+        "name": "Output voltage"
+      },
+      "current": {
+        "name": "Output current"
+      },
+      "power": {
+        "name": "Output power"
+      },
+      "input_voltage": {
+        "name": "Input voltage"
+      },
+      "output_mode": {
+        "name": "Output mode",
+        "state": {
+          "cv": "CV",
+          "cc": "CC",
+          "unknown": "Unknown"
+        }
+      },
+      "protection": {
+        "name": "Protection",
+        "state": {
+          "normal": "Normal",
+          "ovp": "OVP",
+          "ocp": "OCP",
+          "unknown": "Unknown"
+        }
+      },
+      "internal_temperature": {
+        "name": "Internal temperature"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "external_temperature": {
+        "name": "External temperature"
+      },
+      "charge": {
+        "name": "Session charge"
+      },
+      "energy": {
+        "name": "Session energy"
+      },
+      "preset": {
+        "name": "Preset (read only)"
+      },
+      "battery_mode": {
+        "name": "Charging mode",
+        "state": {
+          "off": "Off",
+          "on": "On",
+          "unknown": "Unknown"
+        }
+      }
+    },
+    "number": {
+      "voltage_set": {
+        "name": "Set voltage"
+      },
+      "current_set": {
+        "name": "Current limit"
+      }
+    },
+    "switch": {
+      "output": {
+        "name": "Output"
+      }
+    },
+    "binary_sensor": {
+      "connection": {
+        "name": "Connection"
+      },
+      "keypad_locked": {
+        "name": "Keypad locked"
+      }
+    }
+  }
+}

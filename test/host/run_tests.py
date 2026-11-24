@@ -144,6 +144,7 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
             assert data['voltage_precision']==data['precision']==v_digits
             assert data['current_precision']==i_digits
             assert data['set_v']==2601/10**v_digits and data['out_v']==2603/10**v_digits
+            assert data['batt_v']==4.17
             assert data['set_c']==501/10**i_digits and data['out_c']==503/10**i_digits
             if model==60125:
                 changed=json.loads(result.stdout.splitlines()[1])

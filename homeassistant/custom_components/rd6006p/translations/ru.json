@@ -1,0 +1,130 @@
+{
+  "title": "Riden RD6006P",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Riden RD6006P",
+        "description": "Проверка соединения только чтением. Подключение не меняет БП. Начальные лимиты записи HA: 3 В / 0,1 А; их можно изменить в параметрах интеграции.",
+        "data": {
+          "host": "IP-адрес или имя хоста",
+          "port": "Порт Modbus TCP",
+          "unit": "Unit / slave ID"
+        }
+      },
+      "reconfigure": {
+        "title": "Riden RD6006P",
+        "data": {
+          "host": "IP-адрес или имя хоста",
+          "port": "Порт Modbus TCP",
+          "unit": "Unit / slave ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось прочитать БП. Проверь адрес, порт, сеть и свободные TCP-сокеты.",
+      "wrong_model": "Требуется RD6006P с кодом модели 60065.",
+      "wrong_serial": "Серийный номер отличается. Добавь этот БП отдельным устройством.",
+      "invalid_host": "Введи IP-адрес или имя хоста без http://."
+    },
+    "abort": {
+      "already_configured": "Этот блок питания уже добавлен.",
+      "reconfigure_successful": "Подключение обновлено."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "RD6006P",
+        "description": "Лимиты действуют только на записи HA. Сохранение не меняет уставки БП и аппаратные защиты. Внешняя температура скрыта по умолчанию; включи её при подключённом датчике.",
+        "data": {
+          "max_voltage": "Максимум напряжения для записи из HA (В)",
+          "max_current": "Максимум тока для записи из HA (А)",
+          "poll_interval": "Основной опрос (секунды)",
+          "slow_poll_interval": "Медленный опрос (секунды)",
+          "timeout": "Ожидание ответа (секунды)",
+          "external_probe": "Подключён внешний термодатчик"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "voltage": {
+        "name": "Выходное напряжение"
+      },
+      "current": {
+        "name": "Выходной ток"
+      },
+      "power": {
+        "name": "Выходная мощность"
+      },
+      "input_voltage": {
+        "name": "Входное напряжение"
+      },
+      "output_mode": {
+        "name": "Режим выхода",
+        "state": {
+          "cv": "CV",
+          "cc": "CC",
+          "unknown": "Неизвестно"
+        }
+      },
+      "protection": {
+        "name": "Защита",
+        "state": {
+          "normal": "Норма",
+          "ovp": "OVP",
+          "ocp": "OCP",
+          "unknown": "Неизвестно"
+        }
+      },
+      "internal_temperature": {
+        "name": "Внутренняя температура"
+      },
+      "battery_voltage": {
+        "name": "Напряжение батареи"
+      },
+      "external_temperature": {
+        "name": "Внешняя температура"
+      },
+      "charge": {
+        "name": "Заряд за сеанс"
+      },
+      "energy": {
+        "name": "Энергия за сеанс"
+      },
+      "preset": {
+        "name": "Пресет (чтение)"
+      },
+      "battery_mode": {
+        "name": "Режим зарядки",
+        "state": {
+          "off": "Выключен",
+          "on": "Включён",
+          "unknown": "Неизвестно"
+        }
+      }
+    },
+    "number": {
+      "voltage_set": {
+        "name": "Уставка напряжения"
+      },
+      "current_set": {
+        "name": "Предел тока"
+      }
+    },
+    "switch": {
+      "output": {
+        "name": "Выход"
+      }
+    },
+    "binary_sensor": {
+      "connection": {
+        "name": "Связь"
+      },
+      "keypad_locked": {
+        "name": "Клавиатура заблокирована"
+      }
+    }
+  }
+}

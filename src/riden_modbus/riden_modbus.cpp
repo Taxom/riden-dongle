@@ -171,7 +171,7 @@ bool RidenModbus::get_all_values(AllValues &all_values, bool subset)
     all_values.output_on = values[+Register::Output] != 0;
     all_values.current_range = values[+Register::CurrentRange];
     all_values.is_battery_mode = values[+Register::BatteryMode] != 0;
-    all_values.voltage_battery = value_to_voltage(values[+Register::VoltageBattery]);
+    all_values.voltage_battery = value_to_voltage_battery(values[+Register::VoltageBattery]);
     all_values.probe_temperature_celsius = values_to_temperature(&(values[+Register::ProbeTemperatureCelsius_Sign]));
     all_values.probe_temperature_fahrenheit = values_to_temperature(&(values[+Register::ProbeTemperatureFarhenheit_Sign]));
     all_values.ah = values_to_ah(&(values[+Register::AH_H]));
@@ -351,7 +351,10 @@ bool RidenModbus::is_battery_mode(bool &battery_mode)
 
 bool RidenModbus::get_voltage_battery(double &voltage_battery)
 {
-    return read_voltage(Register::VoltageBattery, voltage_battery);
+    uint16_t value;
+    if (!read_holding_registers(Register::VoltageBattery, &value)) return false;
+    voltage_battery = value_to_voltage_battery(value);
+    return true;
 }
 
 bool RidenModbus::get_probe_temperature_celsius(double &temperature)
@@ -903,6 +906,12 @@ bool RidenModbus::write_holding_registers(const Register reg, uint16_t *value, u
 double RidenModbus::value_to_voltage(const uint16_t value)
 {
     return double(value) / v_multi;
+}
+
+double RidenModbus::value_to_voltage_battery(const uint16_t value)
+{
+    // Register 33 is in centivolts, including precision-output P models.
+    return double(value) / 100.0;
 }
 
 double RidenModbus::value_to_voltage_in(const uint16_t value)

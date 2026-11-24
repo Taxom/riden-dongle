@@ -1,0 +1,38 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RD6006P — демо карточки</title><style>body{margin:20px;background:#111315;--ha-card-background:#151719;--primary-text-color:#e4e8ed;--secondary-text-color:#9198a1;color:#eee;font-family:Arial,sans-serif}.demo-note{color:#92989f;font-size:13px;margin:0 0 16px;line-height:1.5}</style></head><body><p class="demo-note">Демонстрация оформления: показания вымышленные, команды меняют только эту страницу. Для работы с БП установи интеграцию и добавь карточку в Home Assistant.</p><script src="www/rd6006p-card.js"></script><script>
+    window.calls=[];
+    const states={};
+    const put=(key,domain,value,attributes={})=>{
+      const entity_id=`${domain}.rd6006p_${key}`;
+      states[entity_id]={entity_id,state:String(value),attributes:{rd6006p_serial:"3111",rd6006p_key:key,...attributes}};
+    };
+    put("output","switch","on",{web_control_url:"http://psu.example.invalid/control/",diagnostics_url:"http://psu.example.invalid/diagnostics/modbus"});
+    put("voltage_set","number",2.6,{min:0,max:3,step:.001});
+    put("current_set","number",.05,{min:0,max:.1,step:.0001});
+    put("voltage","sensor",2.599);
+    put("current","sensor",.0247);
+    put("power","sensor",.064);
+    put("output_mode","sensor","cv");
+    put("protection","sensor","normal");
+    put("battery_mode","sensor","on");
+    put("battery_voltage","sensor",2.60,{unit_of_measurement:"V"});
+    put("charge","sensor",0.024,{unit_of_measurement:"Ah"});
+    put("energy","sensor",0.062,{unit_of_measurement:"Wh"});
+    window.mockHass={language:"ru",states,callApi:async(method,url)=>{
+      const now=Date.now(), rows=[[],[]];
+      for(let i=0;i<181;i++) {
+        const timestamp=new Date(now-3600000+i*20000).toISOString();
+        rows[0].push({entity_id:"sensor.rd6006p_voltage",state:i>90&&i<105?"unavailable":String(i<20?0:2.599+Math.sin(i/6)*.002),last_changed:timestamp});
+        rows[1].push({entity_id:"sensor.rd6006p_current",state:i>90&&i<105?"unavailable":String(i<20?0:.0247+Math.sin(i/12)*.001),last_changed:timestamp});
+      }
+      return rows;
+    },callService:async(domain,service,data)=>{
+      calls.push({domain,service,data});
+      await new Promise(resolve=>setTimeout(resolve,30));
+      if(window.failCommand)throw new Error("Readback differs; actual state is displayed");
+      states[data.entity_id].state=domain==="number"?String(data.value):service==="turn_on"?"on":"off";
+      window.card.hass=mockHass;
+    }};
+    window.card=document.createElement("rd6006p-card");
+    card.setConfig({type:"custom:rd6006p-card",title:"Riden RD6006P",language:"ru",hours_to_show:1});
+    document.body.append(card);
+    card.hass=mockHass;</script></body></html>

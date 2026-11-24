@@ -533,3 +533,41 @@ The tested source is preserved on `versions/1.7.0-taxom.10`; the original
 version 1–9 snapshots remain intact.
 
 After installing, reload Control with Ctrl+F5 to refresh the embedded page.
+
+## Battery-voltage scale and Home Assistant (taxom.11 / HA 0.1.2)
+
+The output-voltage divisor is not valid for the battery-voltage register.
+Register 33 uses centivolts: raw 417 means 4.17 V, including on RD6006P,
+whose output channel uses millivolts. Both the individual battery getter and
+bulk status now use the dedicated divisor. Details and `/status` preserve the
+battery channel's two transmitted decimal places; output/setpoint precision
+remains 3 voltage / 4 current decimals on RD6006P.
+
+The UniSoft display can show a third battery-voltage decimal that is not
+present in the standard register used here. This conversion does not calibrate
+the battery ADC or compensate differences between V-BATT and output voltage.
+Tests cover raw 0, 1, 417, 6010 and 65535 through both read paths and the API
+across six model/range combinations. The 94 host groups pass, and the ESP12E
+taxom.11 build succeeds. Hardware acceptance for this release remains pending;
+the full multi-client hardware test above still applies to taxom.9.
+
+`homeassistant/` contains a standalone optional integration/card, version 0.1.2.
+It supports RD6006P model 60065 through the existing Modbus TCP bridge, with
+no MQTT/HACS dependency and no extra firmware endpoint. It adds read-only
+battery mode, battery voltage and resettable session Ah/Wh counters alongside
+setpoints, output control, live measurements and history. A missing battery
+block does not invalidate healthy output measurements.
+
+The integration uses one persistent serialized connection, confirms writes by
+reading, and does not automatically repeat uncertain writes. Connection setup,
+HA restart and recovery do not write setpoints or output state. Write limits
+start at 3 V / 0.1 A and can be configured independently of hardware protection.
+Existing user settings and explicitly disabled entities are preserved.
+
+All 67 HA/protocol tests pass against Home Assistant Core 2026.11.1. DOM checks
+cover the battery tiles, unit conversions, offline discovery, no blinking and
+automatic recovery. See `homeassistant/docs/TEST_REPORT.md` for the validation
+limits. CI runs the firmware and HA checks separately and produces a standalone
+HA ZIP using `homeassistant/build_package.py`. Public defaults and examples
+contain no device-specific LAN address. Source is preserved on
+`versions/1.7.0-taxom.11`; earlier version snapshots remain unchanged.

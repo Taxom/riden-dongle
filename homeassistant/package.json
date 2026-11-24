@@ -1,0 +1,11 @@
+{
+  "name": "rd6006p-homeassistant-card-tests",
+  "version": "0.1.2",
+  "private": true,
+  "scripts": {
+    "test": "node --check www/rd6006p-card.js && node tests/test_card_dom.cjs && node tests/test_card_recovery.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "31.0.0"
+  }
+}

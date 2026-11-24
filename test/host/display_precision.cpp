@@ -56,13 +56,25 @@ int main(int argc,char **argv) {
     const unsigned range=std::stoul(argv[2]);
     const unsigned voltage_digits=std::stoul(argv[3]),current_digits=std::stoul(argv[4]);
     regs[0]=model;regs[8]=2601;regs[9]=501;regs[10]=2603;regs[11]=503;regs[14]=6578;
-    regs[20]=range;regs[33]=3001;
+    regs[20]=range;regs[33]=417;
     Serial.on_request=emulate;
     RidenModbus bus;assert(bus.begin());RidenHttpServer http(bus);
     http.handle_status_get();
     assert(http.server.status==200 && writes==0);
     assert(bus.get_voltage_precision()==voltage_digits && bus.get_current_precision()==current_digits);
     assert(bus.get_precision()==voltage_digits);
+    // Battery ADC stays at 0.01 V even when output/setpoint resolution is 0.001 V.
+    assert(bus.get_battery_voltage_precision()==2);
+    for(const uint16_t raw:{uint16_t(0),uint16_t(1),uint16_t(417),uint16_t(6010),uint16_t(65535)}) {
+        regs[33]=raw;
+        double battery_voltage=-1;
+        assert(bus.get_voltage_battery(battery_voltage) && battery_voltage==double(raw)/100.0);
+        AllValues values;
+        assert(bus.get_all_values(values,true) && values.voltage_battery==double(raw)/100.0);
+    }
+    regs[33]=417;
+    assert(writes==0);
+    assert(voltage_to_string(4.17,bus.get_battery_voltage_precision())=="4.17 V");
     std::cout<<http.server.body<<'\n';
 
     if(model==60065) {
