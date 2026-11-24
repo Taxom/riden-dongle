@@ -315,6 +315,8 @@ void RidenHttpServer::handle_firmware_update_post()
     auto &state = firmware_update_state();
 
     if (upload.status == UPLOAD_FILE_START) {
+        // Match upstream: stop UDP services before writing flash.
+        WiFiUDP::stopAll();
         state.started = true;
         state.finished = state.failed = state.success = false;
         state.received_bytes = state.written_bytes = 0;
@@ -356,7 +358,7 @@ void RidenHttpServer::finish_firmware_update_post()
     const auto &state = firmware_update_state();
     if (!state.started || !state.finished || !state.success || state.failed || Update.hasError()) {
         server.client().setNoDelay(true);
-        server.sendHeader("Connection", "close");
+        server.keepAlive(false);
         server.setContentLength(CONTENT_LENGTH_UNKNOWN);
         server.send(500, "text/html", HTML_HEADER);
         server.sendContent_P(HTML_DONGLE_UPDATE_1);
@@ -366,7 +368,7 @@ void RidenHttpServer::finish_firmware_update_post()
         server.sendContent("");
     } else {
         server.client().setNoDelay(true);
-        server.sendHeader("Connection", "close");
+        server.keepAlive(false);
         server.setContentLength(strlen_P(HTML_HEADER) + strlen_P(HTML_REBOOTING_DONGLE_UPDATE_BODY) + strlen_P(HTML_FOOTER));
         server.send(200, "text/html", HTML_HEADER);
         server.sendContent_P(HTML_REBOOTING_DONGLE_UPDATE_BODY);
@@ -436,7 +438,6 @@ void RidenHttpServer::handle_reboot_dongle_get()
     server.sendContent_P(HTML_FOOTER);
     server.sendContent("");
     request_restart();
-    delay(1000);
 }
 
 void RidenHttpServer::handle_control_get(void)

@@ -52,13 +52,16 @@ class RidenHttpServer {
         RidenHttpServer *owner;
         HTTPUpload file;
         int status=0;
+        bool keep_alive=true;
+        unsigned explicit_connection_headers=0;
+        void keepAlive(bool value) { keep_alive=value; }
         String body,connection,portal="false";
         size_t content_length=0;
         HTTPUpload &upload() { return file; }
         Client client() { return {&owner->client_state}; }
-        void sendHeader(const char *key,const char *value) { if(String(key)=="Connection") connection=value; }
+        void sendHeader(const char *key,const char *value) { if(String(key)=="Connection") { connection=value; ++explicit_connection_headers; } }
         void setContentLength(size_t n) { content_length=n; }
-        void send(int code,const char *,const String &content) { status=code;body=content; }
+        void send(int code,const char *,const String &content) { status=code;body=content;connection=keep_alive?"keep-alive":"close"; }
         void sendContent(const String &content) { body+=content; }
         void sendContent_P(const char *content) { body+=content; }
         String arg(const char *) { return portal; }
@@ -95,6 +98,7 @@ static void reset() {
     firmware_update_state()={};Update={};ESP={};WiFiUDP::stops=0;riden_config={};
     http_server.client_state={};http_server.server.status=0;
     http_server.server.body.clear();http_server.server.connection.clear();http_server.server.portal="false";
+    http_server.server.keep_alive=true;http_server.server.explicit_connection_headers=0;
     http_server.server.content_length=0;http_server.on_poll=nullptr;http_server.polls=0;
     clock_calls=MDNS.calls=ArduinoOTA.calls=0;
     has_time=true;did_update_time=false;
@@ -137,12 +141,13 @@ int main() {
     reset();complete_upload();
     const auto &state=firmware_update_state();
     assert(http_server.server.status==200 && state.success && state.finished && state.restart_pending);
-    assert(http_server.server.connection=="close");
+    assert(http_server.server.connection=="close" && !http_server.server.keep_alive);
+    assert(http_server.server.explicit_connection_headers==0);
     assert(http_server.server.content_length==http_server.server.body.size());
-    assert(ESP.restarts==0 && WiFiUDP::stops==0);
+    assert(ESP.restarts==0 && WiFiUDP::stops==1);
     loop();assert(ESP.restarts==0 && clock_calls==0 && riden_modbus.calls==0 && http_server.polls==0);
     delay(500);loop();
-    assert(ESP.restarts==1 && WiFiUDP::stops==1 && http_server.client_state.stop_timeout==200);
+    assert(ESP.restarts==1 && WiFiUDP::stops==2 && http_server.client_state.stop_timeout==200);
     assert(clock_calls==0 && riden_modbus.calls==0 && ArduinoOTA.calls==0);
     std::cout<<"PASS: successful OTA responds completely then restarts from loop with no UART or clock work\n";
 
@@ -151,7 +156,8 @@ int main() {
     assert(http_server.client_state.stop_timeout==200);
     std::cout<<"PASS: an unacknowledged HTTP connection is aborted after a bounded stop before reboot\n";
 
-    reset();http_server.server.portal="true";http_server.handle_reboot_dongle_get();
+    reset();http_server.server.portal="true";const auto reboot_at=millis();http_server.handle_reboot_dongle_get();
+    assert(millis()==reboot_at);
     assert(riden_config.portals==1 && riden_config.commits==1 && firmware_update_state().restart_pending);
     assert(Update.begins==0 && ESP.restarts==0);delay(500);loop();assert(ESP.restarts==1);
     std::cout<<"PASS: manual/config-portal reboot uses the same deferred restart path\n";

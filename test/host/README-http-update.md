@@ -51,3 +51,23 @@ ArduinoOTA transport. It leaves upstream clock synchronization policy as-is;
 the loop merely suppresses all services once a restart has been requested.
 No optional detailed tracing, diagnostics UI or serial-transport changes are
 required by this PR.
+
+## Review follow-up
+
+All three proposals use the same `regression-checks.yaml` workflow and
+`run_all_tests.py` dispatcher. When merged together, one job builds esp12e
+and runs every host suite present. The existing release workflow is unchanged.
+
+The harness extracts production functions by textual signatures/boundaries,
+not a C++ parser. Reformatting or changing adjacent functions requires reviewing
+the extraction ranges and rerunning the tests; compilation alone cannot prove
+that every intended function was extracted.
+
+The review update removes the leftover one-second delay from manual reboot.
+Both upload-result responses use `server.keepAlive(false)` before sending so
+the web-server library emits one consistent Connection header. Host assertions
+check the keep-alive policy and that manual reboot returns without delay.
+UDP services are again stopped at UPLOAD_FILE_START, preserving upstream's
+flash-write policy; they are also stopped immediately before restart in case
+services were reopened. Failed uploads retain the original upstream UDP-stop
+behavior; this change does not implement automatic UDP-service restoration.
