@@ -29,6 +29,9 @@ class RidenModbus {
         if (!write_ok) return false;
         registers[+reg]=value;return true;
     }
+    static constexpr unsigned NUMBER_OF_PRESETS=10;
+    bool set_preset_over_voltage_protection(uint8_t index,double voltage);
+    bool set_preset_over_current_protection(uint8_t index,double current);
     bool set_voltage_set(double voltage);
     bool set_current_set(double current);
     bool set_current_range(uint16_t current_range);
@@ -102,6 +105,17 @@ int main() {
     assert(!http.modbus.set_current_range(2));
     assert(http.modbus.writes==before);
     std::cout<<"PASS: direct callers cannot bypass finite, nonnegative and model-range guards\n";
+
+    assert(http.modbus.set_preset_over_voltage_protection(0,62.0));
+    assert(http.modbus.registers[82]==62000);
+    assert(http.modbus.set_preset_over_current_protection(0,6.2));
+    assert(http.modbus.registers[83]==62000);
+    assert(!http.modbus.set_voltage_set(62.0) && !http.modbus.set_current_set(6.2));
+    assert(!http.modbus.set_preset_over_voltage_protection(0,66.0));
+    assert(!http.modbus.set_preset_over_current_protection(0,6.6));
+    assert(!http.modbus.set_preset_over_voltage_protection(10,62.0));
+    before=http.modbus.writes;
+    std::cout<<"PASS: actual OVP/OCP preset setters allow above-output limits while representation and output guards remain\n";
 
     http.modbus.v_max=100;
     assert(!http.modbus.set_voltage_set(70) && http.modbus.writes==before);

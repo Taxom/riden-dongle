@@ -52,3 +52,27 @@ The [full PC acceptance tool and README](https://github.com/Taxom/riden-dongle/t
 require the combined taxom.9 firmware, including raw-Modbus validation and
 diagnostic mode switching. They intentionally refuse an older firmware before
 writing. They physically change output/V/I, so they are not run by host CI.
+
+## Review follow-up
+
+All three proposals use the same `regression-checks.yaml` workflow and
+`run_all_tests.py` dispatcher. When merged together, one job builds esp12e
+and runs every host suite present. The existing release workflow is unchanged.
+
+The harness extracts production functions by textual signatures/boundaries,
+not a C++ parser. Reformatting or changing adjacent functions requires reviewing
+the extraction ranges and rerunning the tests; compilation alone cannot prove
+that every intended function was extracted.
+
+Output-model limits now live in `set_voltage_set`/`set_current_set` and the
+HTTP input parser. Shared numeric writers enforce only finite, nonnegative
+and uint16-representable values (with a successful current-range read when
+needed). Tests call the actual OVP/OCP preset setters: 62 V OVP and 6.2 A OCP
+are representable on the simulated RD6006P, while 62 V / 6.2 A output setpoints
+are rejected. This preserves protocol representability, not a new guarantee
+of every model's hardware protection range.
+
+SCPI VOLT/CURR calls outside the model output limits now fail through these
+setters and report an error through the existing SCPI error path. A failed
+range read still stops the write; a noisy link can therefore yield more
+explicit failures rather than a write using a guessed multiplier.

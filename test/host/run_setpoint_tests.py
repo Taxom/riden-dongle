@@ -25,7 +25,9 @@ bus=source('src/riden_modbus/riden_modbus.cpp')
 functions=[function(http,'void RidenHttpServer::'+name+'()') for name in ['handle_set_v','handle_set_i','handle_set_i_range']]
 functions += [function(bus,signature) for signature in [
     'bool RidenModbus::set_voltage_set(', 'bool RidenModbus::set_current_set(',
-    'bool RidenModbus::set_current_range(', 'bool RidenModbus::write_voltage(',
+    'bool RidenModbus::set_current_range(',
+    'bool RidenModbus::set_preset_over_voltage_protection(',
+    'bool RidenModbus::set_preset_over_current_protection(', 'bool RidenModbus::write_voltage(',
     'bool RidenModbus::write_current(', 'uint16_t RidenModbus::voltage_to_value(',
     'uint16_t RidenModbus::current_to_value(']]
 with tempfile.TemporaryDirectory(prefix='riden-setpoints-') as tmp:
