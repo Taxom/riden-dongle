@@ -25,6 +25,17 @@ Output/setpoint resolution stays unchanged. Host regression tests cover both
 read paths and the status API for six model/range combinations; this release
 has not yet been tested on the physical PSU.
 
+Firmware **1.7.0-taxom.12** brings the upstream review fixes into the full
+fork: 60-second idle TCP slot cleanup, explicit UART-wait error replies,
+separate output and OVP/OCP encoding limits, consistent HTTP close headers,
+UDP shutdown before flash writes, and immediate return from manual reboot.
+Long-idle TCP clients must reconnect; normal polling refreshes their lease.
+The existing precision fixes, tracing, output-OFF clock policy and HA support
+remain included. HA stays at version 0.1.2 and requires no update for taxom.12.
+The build default is still 9600 baud; an OTA update preserves saved settings,
+including an existing 115200-baud configuration. This build has software/CI
+validation; physical taxom.12 acceptance is pending.
+
 The bundled **Home Assistant integration/card 0.1.2** supports local monitoring,
 voltage/current setpoints, output ON/OFF, battery mode and voltage, session Ah/Wh,
 and voltage/current history. It recovers after HA starts with the PSU powered

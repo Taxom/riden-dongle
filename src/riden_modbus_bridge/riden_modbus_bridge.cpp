@@ -91,18 +91,22 @@ Modbus::ResultCode RidenModbusBridge::modbus_tcp_raw_callback(uint8_t *data, uin
     // Draining the previous UART request can send its TCP response. In
     // particular, do not use rawResponce() there: it frees task()'s receive
     // buffer, including the request pointed to by 'data'.
-    if (!riden_modbus.wait_for_inactive()) {
-        return Modbus::EX_SUCCESS;
-    }
+    const bool uart_inactive = riden_modbus.wait_for_inactive();
 
     transaction_id = source->transactionId;
     slave_id = source->slaveId;
     client_slot = modbus_tcp.current_client();
+    modbus_tcp.touch_client(client_slot);
     request_pending = true;
     ++diagnostics.requests;
     request_length = len;
     std::memset(request_header, 0, sizeof(request_header));
     std::memcpy(request_header, data, std::min<size_t>(len, sizeof(request_header)));
+
+    if (!uart_inactive) {
+        fail_request(Modbus::EX_DEVICE_FAILED_TO_RESPOND);
+        return Modbus::EX_SUCCESS;
+    }
 
     // This gateway has one PSU at address 1. A broadcast does not create an
     // RTU transaction, so installing an interceptor for it would steal the
@@ -308,6 +312,7 @@ bool RidenModbusTCP::send_response(int8_t client, uint16_t transaction, uint8_t 
         !tcpclient[client] || !tcpclient[client]->connected()) {
         return false;
     }
+    touch_client(client);
     uint8_t frame[7 + MODBUS_MAX_FRAME];
     frame[0] = transaction >> 8;
     frame[1] = transaction & 0xff;
@@ -350,4 +355,40 @@ void RidenModbusTCP::disconnect_client(const IPAddress &ip)
             tcpclient[i] = nullptr;
         }
     }
+}
+
+// A lost peer can remain connected at TCP level without ever sending FIN.
+// Bound its slot occupancy even when IP-based eviction is disabled. Long-idle
+// legitimate clients must reconnect; active polling refreshes the lease.
+void RidenModbusTCP::touch_client(int8_t slot)
+{
+    if (slot >= 0 && slot < MODBUSIP_MAX_CLIENTS) {
+        tracked_clients[slot] = tcpclient[slot];
+        last_activity[slot] = millis();
+    }
+}
+
+void RidenModbusTCP::expire_clients()
+{
+    const uint32_t now = millis();
+    for (int8_t slot = 0; slot < MODBUSIP_MAX_CLIENTS; ++slot) {
+        if (!tcpclient[slot] || !tcpclient[slot]->connected()) {
+            tracked_clients[slot] = nullptr;
+        } else if (tracked_clients[slot] != tcpclient[slot]) {
+            touch_client(slot);
+        } else if (uint32_t(now - last_activity[slot]) >= CLIENT_IDLE_MS) {
+            tcpclient[slot]->stop(0);
+            delete tcpclient[slot];
+            tcpclient[slot] = nullptr;
+            tracked_clients[slot] = nullptr;
+            ++idle_disconnects;
+        }
+    }
+}
+
+void RidenModbusTCP::task()
+{
+    expire_clients();
+    ModbusTCP::task();
+    expire_clients(); // Give newly accepted sockets a fresh lease immediately.
 }

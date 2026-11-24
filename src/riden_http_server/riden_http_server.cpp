@@ -330,6 +330,8 @@ void RidenHttpServer::handle_firmware_update_post()
     auto &state = firmware_update_state();
 
     if (upload.status == UPLOAD_FILE_START) {
+        // Stop UDP services before flash writes, matching upstream policy.
+        WiFiUDP::stopAll();
         state.started = true;
         state.finished = state.failed = state.success = false;
         state.received_bytes = state.written_bytes = 0;
@@ -371,7 +373,7 @@ void RidenHttpServer::finish_firmware_update_post()
     const auto &state = firmware_update_state();
     if (!state.started || !state.finished || !state.success || state.failed || Update.hasError()) {
         server.client().setNoDelay(true);
-        server.sendHeader("Connection", "close");
+        server.keepAlive(false);
         server.setContentLength(CONTENT_LENGTH_UNKNOWN);
         server.send(500, "text/html", HTML_HEADER);
         server.sendContent_P(HTML_DONGLE_UPDATE_1);
@@ -381,7 +383,7 @@ void RidenHttpServer::finish_firmware_update_post()
         server.sendContent("");
     } else {
         server.client().setNoDelay(true);
-        server.sendHeader("Connection", "close");
+        server.keepAlive(false);
         server.setContentLength(strlen_P(HTML_HEADER) + strlen_P(HTML_REBOOTING_DONGLE_UPDATE_BODY) + strlen_P(HTML_FOOTER));
         server.send(200, "text/html", HTML_HEADER);
         server.sendContent_P(HTML_REBOOTING_DONGLE_UPDATE_BODY);
@@ -451,7 +453,6 @@ void RidenHttpServer::handle_reboot_dongle_get()
     server.sendContent_P(HTML_FOOTER);
     server.sendContent("");
     request_restart();
-    delay(1000);
 }
 
 void RidenHttpServer::handle_control_get(void)
@@ -797,6 +798,7 @@ void RidenHttpServer::handle_modbus_diagnostics()
     json += detailed_diagnostics_enabled() ? "true" : "false";
     json += ",\"setpoint_validation\":\"strict_v1\"";
     json += ",\"rejected_requests\":" + String(tcp.rejected_requests);
+    json += ",\"tcp_idle_disconnects\":" + String(bridge.get_idle_disconnects());
     json += ",\"detail_scope\":\"enabled_periods_since_boot\"";
 
     const auto &monitor = modbus.get_uart_monitor();

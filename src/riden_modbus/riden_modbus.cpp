@@ -258,6 +258,7 @@ bool RidenModbus::get_voltage_set(double &voltage)
 
 bool RidenModbus::set_voltage_set(const double voltage)
 {
+    if (!std::isfinite(voltage) || voltage < 0 || voltage > v_max) return false;
     return write_voltage(Register::VoltageSet, voltage);
 }
 
@@ -268,6 +269,7 @@ bool RidenModbus::get_current_set(double &current)
 
 bool RidenModbus::set_current_set(const double current)
 {
+    if (!std::isfinite(current) || current < 0 || current > i_max) return false;
     return write_current(Register::CurrentSet, current);
 }
 
@@ -660,7 +662,7 @@ bool RidenModbus::read_voltage(const Register reg, double &voltage)
 
 bool RidenModbus::write_voltage(const Register reg, const double voltage)
 {
-    if (!std::isfinite(voltage) || voltage < 0 || voltage > v_max || voltage * v_multi > 65535.0)
+    if (!std::isfinite(voltage) || voltage < 0 || voltage * v_multi > 65535.0)
         return false;
     const uint16_t value = voltage_to_value(voltage);
     return write_holding_register(reg, value);
@@ -683,7 +685,7 @@ bool RidenModbus::read_current(const Register reg, double &current)
 
 bool RidenModbus::write_current(const Register reg, const double current)
 {
-    if (!std::isfinite(current) || current < 0 || current > i_max) return false;
+    if (!std::isfinite(current) || current < 0) return false;
     if (supports_current_ranges()) {
         uint16_t range;
         if (!read_holding_registers(Register::CurrentRange, &range)) return false;

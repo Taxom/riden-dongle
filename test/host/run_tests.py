@@ -40,6 +40,11 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
     subprocess.run(cmd,check=True)
     subprocess.run([str(tmp/'shared_uart')]+(['--reproduce'] if args.reproduce_upstream else []),check=True)
     if not args.reproduce_upstream:
+        cmd[cmd.index(str(root/'test/host/shared_uart.cpp'))]=str(root/'test/host/inactive_failure.cpp')
+        cmd[-1]=str(tmp/'inactive_failure')
+        subprocess.run(cmd,check=True)
+        subprocess.run([str(tmp/'inactive_failure')],check=True)
+        cmd[cmd.index(str(root/'test/host/inactive_failure.cpp'))]=str(root/'test/host/shared_uart.cpp')
         cmd[cmd.index(str(root/'test/host/shared_uart.cpp'))]=str(root/'test/host/tcp_sessions.cpp')
         cmd.insert(1,'-I'+str(root/'test/host/real_tcp'))
         cmd[-1]=str(tmp/'tcp_sessions')
@@ -57,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
         result=subprocess.run([str(tmp/'http_diagnostics')],check=True,text=True,stdout=subprocess.PIPE)
         data=json.loads(result.stdout)
         assert data['version']=='1.7.0-taxom.9' and data['requests']==10
+        assert data['tcp_idle_disconnects']==0
         assert data['setpoint_validation']=='strict_v1' and data['rejected_requests']==0
         assert data['diagnostics_enabled'] is True
         assert data['detail_scope']=='enabled_periods_since_boot'
@@ -154,3 +160,6 @@ with tempfile.TemporaryDirectory(prefix='riden-host-') as tmp:
             print('PASS: model %d range %d API precision, scaled values and decimal read/write preservation' %
                   (model,current_range))
         subprocess.run(['node',str(root/'test/host/web_precision.js')],check=True,cwd=root)
+
+if not args.reproduce_upstream:
+    subprocess.run(['python3',str(root/'test/host/run_setpoint_tests.py')],check=True,cwd=root)

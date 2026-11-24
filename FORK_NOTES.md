@@ -571,3 +571,41 @@ limits. CI runs the firmware and HA checks separately and produces a standalone
 HA ZIP using `homeassistant/build_package.py`. Public defaults and examples
 contain no device-specific LAN address. Source is preserved on
 `versions/1.7.0-taxom.11`; earlier version snapshots remain unchanged.
+
+## Full review follow-up (taxom.12)
+
+The fixes from PRs #75, #76 and #77 are now incorporated into the full fork,
+including its existing raw-Modbus validation, tracing/configuration, output-OFF
+clock synchronization and RD6006P precision support.
+
+- Reclaim TCP slots after 60 seconds without request/response activity, including
+  peers which still appear connected after a lost network/FIN. Active polling
+  renews the lease; legitimate long-idle clients must reconnect. The existing
+  diagnostics endpoint reports `tcp_idle_disconnects` without an extra UART read.
+- Return exception 0x0b with the original socket/TID after an initial UART wait
+  failure. Preserve previous transaction ownership while draining it. TCP/UART
+  processing remains synchronous: timeout/retry can delay other loop services
+  by approximately two RTU timeouts plus recovery/turnaround guards.
+- Keep output-model limits in output setters and the HTTP/raw-Modbus validation
+  boundaries. Shared numeric writers retain finite/nonnegative/uint16 checks,
+  allowing representable OVP/OCP presets above output limits. Range-read failure
+  still stops the write. Existing SCPI error handling receives output-setter errors.
+- Use the web server's keep-alive policy for one consistent Connection header;
+  stop UDP before flash writes and again before deferred restart; remove the
+  leftover one-second delay from manual reboot. Failed upload UDP behavior
+  matches upstream; this does not add automatic UDP-service restoration.
+- Keep existing EEPROM format/settings and HA integration/card 0.1.2. No
+  automatic output/setpoint restore, calibration write or forced baud change
+  is introduced. The separate PR branches remain independently reviewable.
+
+The full source is preserved on `versions/1.7.0-taxom.12`. Host checks include
+idle-slot reclamation, active peer survival, reconnect and timer wrap; initial
+wait errors with TID zero; actual OVP/OCP preset setters; HTTP close/restart;
+and the previous precision/clock/tracing regressions. Physical validation of
+this complete build and the requested other-model/default-baud isolated tests
+remain pending. Previous hardware evidence is still the taxom.9 run above.
+
+Local validation for the complete taxom.12 source: 106 firmware host groups,
+67 HA/protocol tests, card DOM/recovery checks and the ESP12E build pass.
+Host ASan/UBSan runs disable leak detection under the local ptrace restriction;
+GitHub CI runs the normal sanitizer suite. No physical PSU was contacted.
